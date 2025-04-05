@@ -49,7 +49,7 @@ class TT {
             return hash & (0xffffffffffffffffull >> (64 - TT_SIZE_LOG2));
         };
 
-        TTEntry table[TT_SIZE] = { 0 };
+        TTEntry table[TT_SIZE];
 };
 
 #endif

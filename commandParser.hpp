@@ -2,39 +2,77 @@
 #define __COMMAND_PARSER_INC_GUARD__
 
 #include <vector>
+#include <string>
+#include <sstream>
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
 #include "engine.hpp"
 #include "defines.hpp"
 
 class CommandParser {
     public:
-        CommandParser() { };
-        ~CommandParser() { };
+        CommandParser() : isActive(false), debugMode(false) { };
+        ~CommandParser() { 
+            stop(); // Ensure thread is stopped on destruction
+        };
 
         // Return 1 on successful exit
-        int process();
+        void process(std::string line);
         void sendBestMove(std::string const& bestmove);
         void sendPrincipalVariation(int depth, int score, int time, int nodes,
                                     int nps, std::string const& pv);
+        
+        // Thread control
+        void stop();
+
+        // Debug control
+        void setDebugMode(bool mode) { debugMode = mode; }
+        bool isDebugMode() const { return debugMode; }
 
     private:
-        void sendEngineInfo();
+        // Command handling functions
+        void logCommand(const std::string& line);
+        void handleActiveCommand(const std::string& line);
+        void handleInactiveCommand(const std::string& line);
+        void handleIsReady();
+        void handleNewGame();
+        void handleMove(std::stringstream& ss);
+        void handleListMoves();
+        void handleListCaptures();
+        void handlePosition(std::stringstream& ss);
+        void handleGo(std::stringstream& ss);
+        void handleSetOption(std::stringstream& ss);
+        void handlePerft(std::stringstream& ss);
+        void handleDebug(std::stringstream& ss);
+        void handleMultiPVOption(std::stringstream& ss);
+        void initializeEngine();
+        void logUnhandledCommand(const std::string& line);
+        void handleEval();
+        
+        // Search handling functions
+        void handleInfiniteSearch();
+        void handleMoveTimeSearch(std::stringstream& ss);
+        void handleDepthSearch(std::stringstream& ss);
+        void handleDepthOption(std::stringstream& ss);
+        void handleTimeLimitOption(std::stringstream& ss);
+        void handleStartPosition(std::stringstream& ss);
+        void printPerftResults(uint64_t npos, std::chrono::high_resolution_clock::time_point start);
 
+        void sendEngineInfo();
         int handleDebug(bool debugMode);
-        int handleIsReady();
         int handleSetOption(std::string const& name, std::string const& value);
         int handleRegister(std::string const& registerMsg);
-        int handleNewGame();
-        int handleFENPosition(std::string const& fen, std::vector<std::string>& moves);
-        int handleNewPosition(std::vector<std::string>& moves, BoardState::BoardType& board);
-        int handleGo(int depth, int nodes, bool infinite);
-        int handleStop();
+        int handleFENPosition(std::stringstream& ss);
+        int handleNewPosition(std::vector<std::string>& moves, BitBoard& board);
 
-        bool isActive = false;
+        bool isActive;
+        bool debugMode;
 
-        BoardState::BoardType board = BoardState::initialBoard;
-        BoardState::ColorPiece oldPiece = BoardState::WEMPTY;
-        BoardState::Move lastmove;
-        BoardState::Move bestmove;
+        BitBoard board;
+        BitBoardState::Piece oldPiece = BitBoardState::EMPTY;
+        BitBoard::MoveType lastmove;
+        BitBoard::MoveType bestmove;
         int32_t besteval;
         uint8_t depth = DEFAULT_DEPTH;
 

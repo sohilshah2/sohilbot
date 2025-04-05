@@ -1,49 +1,60 @@
 #ifndef __ENGINE_INC_GUARD__
 #define __ENGINE_INC_GUARD__
 
-#include "boardState.hpp"
-#include "transpositionTables.hpp"
+#include "bitboard.hpp"
 #include <array>
 #include <chrono>
 
 class Engine {
     public:
-        Engine(TT *table) : table(table) { };
+        Engine() { };
         ~Engine() { };
 
-        void setBoardState(BoardState::BoardType const& state);
-        int32_t searchBestMove(BoardState::BoardType& board, BoardState::Move& move, 
+        int32_t searchBestMove(BitBoard& board, BitBoard::Move& move, 
                                uint8_t depth, uint32_t time);
-        uint32_t perft(BoardState::BoardType& board, 
+        uint64_t perft(BitBoard& board, 
                        uint8_t depth, bool divide=true);
-    private:
-        int32_t recursiveDepthSearch(BoardState::BoardType& board,
-                                     std::array<BoardState::Move, MAX_DEPTH>& currVariation,
-                                     bool usePrincipalMove, int32_t alpha, int32_t const beta, 
-                                     uint8_t maxdepth, uint8_t const currdepth);
-        bool testInCheck(BoardState::BoardType& board);
-        void sendEngineInfo(uint8_t depth);
+        void stop() { shouldStop = true; };
+        void setNumPvs(uint8_t pvs) { numPvs = pvs; }
 
-        std::array<BoardState::Move, MAX_DEPTH> topLine;
-        TT *table;
-        int32_t topEval;
-        int32_t npos;
-        int32_t branches;
-        int32_t numRedos=0;
-        int32_t numReductions=0;
+    private:
+        struct Line {
+            std::array<BitBoard::Move, MAX_DEPTH> moves;
+            int32_t eval;
+        };
+
+        int32_t recursiveDepthSearch(BitBoard& board,
+                                     int32_t alpha, int32_t const beta, 
+                                     uint8_t maxdepth, uint8_t const currdepth);
+        int32_t searchPv(BitBoard& board,
+                         int32_t alpha, int32_t const beta, 
+                         uint8_t const maxdepth, uint8_t const currdepth);
+        int32_t quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint8_t const currdepth);
+
+        void sendEngineInfo(uint8_t depth);
+        void printSearchStats() const;
+
+        struct Line currPvs[MAX_PVS][MAX_DEPTH];
+        struct Line pvs[MAX_PVS];
+
+        uint64_t npos;
+        uint64_t branches;
+        uint32_t numRedos=0;
+        uint32_t numReductions=0;
         uint32_t numTTLookups=0;
         uint32_t numTTHits=0;
         uint32_t numTTSoftmiss=0;
         uint32_t numTTEvictions=0;
         uint32_t numTTFills=0;
         uint32_t numNullReductions=0;
-        int32_t aspirationRetries=0;
-        int32_t windowAlpha=INT32_MIN;
-        int32_t windowBeta=INT32_MIN;
+        uint32_t aspirationRetries=0;
         uint8_t depthIter=0;
+        uint8_t seldepth=0;
         uint32_t timelimit=3000;
-        std::chrono::time_point<std::chrono::system_clock> timeStart;
+        std::chrono::time_point<std::chrono::steady_clock> timeStart;
         float prevTime;
+        std::atomic<bool> shouldStop;
+        uint8_t numPvs=1;
 };
 
 #endif

@@ -1,7 +1,7 @@
 #include <cstring>
 #include <assert.h>
 #include "transpositionTables.hpp"
-#include "boardState.hpp"
+#include "bitboard.hpp"
 
 TT::TT()
 {
@@ -56,21 +56,11 @@ uint64_t TT::genHash(BoardState::BoardType const& board) const
     using namespace BoardState;
     uint64_t hash;
     hash = board.turn == BoardState::WHITE ? TURN_HASH_WHITE : 0;
-    hash ^= EN_PASSANT_HASH*board.cached.enPassantSquare;
-    for (uint8_t idx = 0; idx < 32; idx++) {
-        // Are both packed squares empty?
-        if (!board.b.data8[idx]) continue;
+    //hash ^= EN_PASSANT_HASH*board.cached[board.turn].enPassantSquare;
 
-        uint8_t data = board.b.data8[idx];
-        for (uint8_t nib = 0; nib < 2; nib++) {
-            uint8_t pos = (idx<<1) | nib;
-            uint8_t pieceData = getColorPiece(board, pos);
-        
-            // Is the square empty?
-            if (!(pieceData)) continue;
+    // TODO FIX THIS
+    //uint8_t pieceData = getPiece(board.p[0], pos) | getPiece(board.p[1], pos);
 
-            hash ^= BOARDPOS_HASH[pos][pieceData];
-        }
-    }
+    //hash ^= BOARDPOS_HASH[pos][pieceData];
     return hash;
 }
