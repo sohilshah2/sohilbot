@@ -5,42 +5,54 @@
 
 //#define ASSERT_ON
 
-#define ENABLE_ASPIRATION
+//#define SEARCH_STATS_ON
+//#define LOG_ON
+
+//#define ENABLE_ASPIRATION
 #define ENABLE_NULL_MOVE
 #define ENABLE_LMR
 #define ENABLE_QUIESCE
-//#define ENABLE_PV_SEARCH
+#define ENABLE_TT
+#define ENABLE_CONTEMPT
 
 // 1 hour in milliseconds
 #define INFINITE_TIMELIMIT 3600000
+#define TIME_BUFFER 100
+
+#define DRAW_THRESHHOLD 60
 
 #define MAX_PVS 5
 
 #define MAX_MOVES 128
-#define MAX_DEPTH 40
-#define DEFAULT_DEPTH 40
+#define MAX_DEPTH 64
+#define DEFAULT_DEPTH 64
 
 #define LATE_MOVE_CUTOFF 2
 #define LATE_MOVE_CUTOFF_2 4
+#define REDUCE1(x) (((x)*3)/4)
+#define REDUCE2(x) (((x)*2)/3)
 
-#define ASPIRATION_START 39
-#define ASPIRATION_DELTA 30
+#define ASPIRATION_START 35
+#define ASPIRATION_DELTA 25
 
 #define ENDGAME_CUTOFF 60
 
-#define MATE(n) ((BoardState::KING_VALUE)-(n))
+#define MATE(n) ((BitBoardState::KING_VALUE)-(n))
 
-// In num positions
-#define TT_SIZE_LOG2 23
+// In num entries. Entry size 32B
+#define TT_SIZE_LOG2 22
 #define TT_SIZE (1<<TT_SIZE_LOG2)
 
 #define INF 1000000
 #define NEG_INF -1000000
 
-// Completely random numbers for hashing
+// Random numbers for hashing
 #define TURN_HASH_WHITE 0x3DB924635E0F0898
-#define EN_PASSANT_HASH 0xD12D774B6F44144F
-#define CASTLE_HASH 0x4C27AC1F35B77EBA
+#define WHITE_CASTLE_LONG_HASH 0xD1719119D848F035
+#define WHITE_CASTLE_SHORT_HASH 0x8C75D1AE197EAB21
+#define BLACK_CASTLE_LONG_HASH 0x41920FB2610B9534
+#define BLACK_CASTLE_SHORT_HASH 0x4C0961A2EAEFA070
+#define EN_PASSANT_HASH 0xD196E5F6169A70A7
 
 namespace BitBoardState {
     enum Piece {EMPTY=0,PAWN=1,ROOK=2,KNIGHT=3,BISHOP=4,QUEEN=5,KING=6};
@@ -50,17 +62,17 @@ namespace BitBoardState {
     static int32_t const KING_VALUE = 50000;
     static int32_t const KING_STRENGTH_VALUE = 430;
 
-    static int32_t const PAWN_VALUE_MG = 100;
-    static int32_t const KNIGHT_VALUE_MG = 315;
-    static int32_t const BISHOP_VALUE_MG = 345;
-    static int32_t const ROOK_VALUE_MG = 563;
+    static int32_t const PAWN_VALUE_MG = 90;
+    static int32_t const KNIGHT_VALUE_MG = 320;
+    static int32_t const BISHOP_VALUE_MG = 340;
+    static int32_t const ROOK_VALUE_MG = 480;
     static int32_t const QUEEN_VALUE_MG = 950;
 
-    static int32_t const PAWN_VALUE_EG = 140;
-    static int32_t const KNIGHT_VALUE_EG = 315;
-    static int32_t const BISHOP_VALUE_EG = 345;
-    static int32_t const ROOK_VALUE_EG = 650;
-    static int32_t const QUEEN_VALUE_EG = 1200; 
+    static int32_t const PAWN_VALUE_EG = 120;
+    static int32_t const KNIGHT_VALUE_EG = 320;
+    static int32_t const BISHOP_VALUE_EG = 335;
+    static int32_t const ROOK_VALUE_EG = 530;
+    static int32_t const QUEEN_VALUE_EG = 1100; 
 
     static const uint64_t notAFile = 0xfefefefefefefefe;
     static const uint64_t notHFile = 0x7f7f7f7f7f7f7f7f;
@@ -69,8 +81,8 @@ namespace BitBoardState {
         0,   0,   0,   0,   0,   0,  0,   0,
         98, 134,  61,  95,  68, 126, 34, -11,
         -6,   7,  26,  31,  65,  56, 25, -20,
-        -14,  13,   6,  21,  23,  12, 17, -23,
-        -27,  -2,  -5,  12,  17,   6, 10, -25,
+        -14,  13,   9,  25,  27,  12, 17, -23,
+        -27,  -2,   7,  21,  23,   6, 10, -25,
         -26,  -4,  -4, -10,   3,   3, 33, -12,
         -35,  -1, -20, -23, -15,  24, 38, -22,
         0,   0,   0,   0,   0,   0,  0,   0,
@@ -93,7 +105,7 @@ namespace BitBoardState {
         -47,  60,  37,  65,  84, 129,  73,   44,
         -9,  17,  19,  53,  37,  69,  18,   22,
         -13,   4,  16,  13,  28,  19,  21,   -8,
-        -23,  -9,  12,  10,  19,  17,  25,  -16,
+        -23,  -9,  10,  10,  19,  14,  25,  -16,
         -29, -53, -12,  -3,  -1,  18, -14,  -19,
         -105, -21, -58, -33, -17, -28, -19,  -23,
     };
@@ -139,7 +151,7 @@ namespace BitBoardState {
         -36, -26, -12,  -1,  9, -7,   6, -23,
         -45, -25, -16, -17,  3,  0,  -5, -33,
         -44, -16, -20,  -9, -1, 11,  -6, -71,
-        -19, -13,   1,  17, 16,  7, -37, -26,
+        -19, -13,   1,  12, 10,  7, -37, -26,
     };
 
     static int32_t const PST_EG_R[64] = {
@@ -197,70 +209,6 @@ namespace BitBoardState {
         -53, -34, -21, -11, -28, -14, -24, -43
     };
 
-}
-
-namespace BoardState {
-    enum Piece {EMPTY=0,PAWN=1,ROOK=2,KNIGHT=3,BISHOP=4,QUEEN=5,KING=6};
-
-    enum ColorPiece {WEMPTY=0,WPAWN=1,WROOK=2,WKNIGHT=3,WBISHOP=4,WQUEEN=5,WKING=6, 
-                     BEMPTY=8,BPAWN=9,BROOK=10,BKNIGHT=11,BBISHOP=12,BQUEEN=13,BKING=14};
-
-    enum Color {WHITE=0, BLACK=0x8};
-
-    static int32_t const PAWN_VALUE = 100;
-    static int32_t const KNIGHT_VALUE = 305;
-    static int32_t const BISHOP_VALUE = 333;
-    static int32_t const ROOK_VALUE = 563;
-    static int32_t const QUEEN_VALUE = 950;
-    static int32_t const KING_VALUE = 50000;
-
-    static uint8_t const pieceColorMask = 0xf;
-    static uint8_t const pieceMask = 0x7;
-    static uint8_t const colorMask = 0x8;
-    
-    typedef struct BoardType {
-        union Board {
-            uint64_t data64[4];
-            uint8_t data8[32];
-        } b;
-
-        struct CachedState {
-            uint8_t enPassantSquare;
-            bool whiteShort;
-            bool whiteLong;
-            bool blackShort;
-            bool blackLong;
-            bool whiteCastled;
-            bool blackCastled;
-        } cached ={.enPassantSquare=0,.whiteShort=true,.whiteLong=true,.blackShort=true,
-                   .blackLong=true,.whiteCastled=false,.blackCastled=false};
-        uint64_t hash = 0;
-        int32_t value = 0;
-
-        Color turn=WHITE;
-        bool operator==(const BoardType &other) const { 
-            return b.data64[0] == other.b.data64[0] 
-                   && b.data64[1] == other.b.data64[1]
-                   && b.data64[2] == other.b.data64[2]
-                   && b.data64[3] == other.b.data64[3]
-                   && turn==other.turn
-                   && cached.enPassantSquare==other.cached.enPassantSquare;
-        };
-    } BoardType;
-
-    typedef struct Move {
-        uint8_t from;
-        uint8_t to;
-        ColorPiece promote;
-        Move(uint8_t _from=0, uint8_t _to=0, ColorPiece _promote=WEMPTY) 
-            : from(_from), to(_to), promote(_promote) {};
-        inline bool operator==(Move const& other) const {
-            return from == other.from && to == other.to && promote == other.promote;
-        }
-        inline bool valid() const {
-            return !(from == to && from == 0);
-        }
-    } MoveType;
 }
 
 #endif

@@ -1,7 +1,15 @@
 #include "bitboard.hpp"
 #include "evaluate.hpp"
+#include "transpositionTables.hpp"
 
 using namespace BitBoardState;
+
+const BitBoard::MoveData BitBoard::DEFAULT_MOVE = {.isCapture=false, .isCastle=false, .isEnPassant=false, .isPromotion=false};
+const BitBoard::MoveData BitBoard::CAPTURE_MOVE = {.isCapture=true, .isCastle=false, .isEnPassant=false, .isPromotion=false};
+const BitBoard::MoveData BitBoard::EN_PASSANT_MOVE = {.isCapture=true, .isCastle=false, .isEnPassant=true, .isPromotion=false};
+const BitBoard::MoveData BitBoard::CASTLE_MOVE = {.isCapture=false, .isCastle=true, .isEnPassant=false, .isPromotion=false};
+const BitBoard::MoveData BitBoard::PROMOTION_MOVE = {.isCapture=false, .isCastle=false, .isEnPassant=false, .isPromotion=true};
+const BitBoard::MoveData BitBoard::PROMOTE_CAPTURE = {.isCapture=true, .isCastle=false, .isEnPassant=false, .isPromotion=true};
 
 inline uint64_t shiftNorth(uint64_t const b) { return b << 8; }
 inline uint64_t shiftSouth(uint64_t const b) { return b >> 8; }
@@ -13,7 +21,13 @@ inline uint64_t shiftWest(uint64_t const b) {return (b >> 1) & notHFile;}
 inline uint64_t shiftSoWest(uint64_t const b) {return (b >> 9) & notHFile;}
 inline uint64_t shiftNoWest(uint64_t const b) {return (b << 7) & notHFile;}
 
-BitBoard::BitBoard(bool startpos) {
+BitBoard::BitBoard(TT* _tt, bool startpos) {
+    tt = _tt;
+
+    if (tt) {
+        tt->clear();
+    }
+
     moves = 0;
     if (startpos) {
         p[0] = {.pawn=0xff00,.knight=0x42,.bishop=0x24,.rook=0x81,.queen=0x8,.king=0x10};
@@ -22,11 +36,17 @@ BitBoard::BitBoard(bool startpos) {
                 .queen=0x800000000000000ull,.king=0x1000000000000000ull};
 
         s[0] = s[1] = {.occupancy=0,.scope=0,.mobility=0,.enPassantSquare=0,
-                        .castleShort=true,.castleLong=true,.castled=false};
+                        .castleShort=true,.castleLong=true};
+    } else {
+        p[0] = p[1] = {.pawn=0,.knight=0,.bishop=0,.rook=0,.queen=0,.king=0};
+        s[0] = s[1] = {.occupancy=0,.scope=0,.mobility=0,.enPassantSquare=0,
+                        .castleShort=false,.castleLong=false};
     }
 
     turn = WHITE;
-    //hash = TT::genHash();
+    if (tt) {
+        hash = tt->genHash(*this);
+    }
     value = 0;
 
     for (uint8_t pos = 0; pos < 64; pos++) {
@@ -243,12 +263,11 @@ void BitBoard::maskSetBitBoard(enum Piece piece, bool c, uint64_t m) {
 }
 
 void BitBoard::changeTurn() {
-    value = -value;
     hash ^= TURN_HASH_WHITE;
     turn ^= BLACK; // BLACK == 1
 }
 
-void BitBoard::strToMove(std::string moveText, MoveType& move) {
+void BitBoard::strToMove(std::string const& moveText, struct Move& move) {
     assert(moveText.size() == 4 || moveText.size() == 5);
 
     uint8_t col = moveText[0] - 'a';
@@ -285,7 +304,7 @@ void BitBoard::strToMove(std::string moveText, MoveType& move) {
     }
 }
 
-std::string BitBoard::moveToStr(MoveType& move) {
+std::string BitBoard::moveToStr(struct Move const& move) {
     char colF = 'a' + (move.from & 7);
     char rowF = '1' + (move.from >> 3);
     char colT = 'a' + (move.to & 7);
@@ -447,11 +466,11 @@ void BitBoard::printMobility() const {
 
 void BitBoard::validateBitBoard() const {
     #ifdef ASSERT_ON
-    //assert((value == getBoardValue()));
+    assert((hash == tt->genHash(*this)));
     #endif
 }
 
-enum Piece BitBoard::movePiece(MoveType const& move) {
+void BitBoard::movePiece(struct Move const& move) {
     uint8_t from = move.from;
     uint8_t to = move.to;
     uint64_t fromBitboard = 1ull << from;
@@ -460,74 +479,87 @@ enum Piece BitBoard::movePiece(MoveType const& move) {
     enum Piece fromPiece = getPiece(p[turn], from);
     enum Piece toPiece = getPiece(p[!turn], to);
 
-    //hash ^= tt->BOARDPOS_HASH[to][(turn << 3) | toPiece];
+    hash ^= tt->BOARDPOS_HASH[turn][fromPiece][from];
+    if (toPiece) hash ^= tt->BOARDPOS_HASH[!turn][toPiece][to];
 
     maskClearBitBoard(fromPiece, turn, fromBitboard);
     maskClearBitBoard(toPiece, !turn, toBitboard);
+
     // Promote
     if (move.promote != EMPTY) {
         fromPiece = move.promote;
-        //hash ^= tt->BOARDPOS_HASH[to][move.promote];
-    } else {
-        //hash ^= tt->BOARDPOS_HASH[to][fromPiece];
     }
     
+    hash ^= tt->BOARDPOS_HASH[turn][fromPiece][to];
     maskSetBitBoard(fromPiece, turn, toBitboard);
 
     // En Passant
     if (fromPiece == PAWN && s[turn].enPassantSquare != 0 && s[turn].enPassantSquare == to) {
         maskClearBitBoard(PAWN, !turn, turn ? toBitboard << 8ull : toBitboard >> 8ull);
-        //hash ^= tt->BOARDPOS_HASH[newTo][toPiece];
+        hash ^= tt->BOARDPOS_HASH[!turn][PAWN][turn ? to+8 : to-8];
     }
 
-    //hash ^= EN_PASSANT_HASH*s.enPassantSquare;
+    hash ^= EN_PASSANT_HASH*s[turn].enPassantSquare;
     s[turn].enPassantSquare = 0;
     if (fromPiece == PAWN && (to-from) == 16) {
         s[BLACK].enPassantSquare = from + 8;
     } else if (fromPiece == PAWN && (from-to) == 16) {
         s[WHITE].enPassantSquare = to + 8;
     }
-    //hash ^= EN_PASSANT_HASH*s.enPassantSquare;
+    hash ^= EN_PASSANT_HASH*s[!turn].enPassantSquare;
 
     // Castling
     if (fromPiece == KING && s[turn].castleShort && to-from == 2) {
-        s[turn].castled = true;
+        if (s[turn].castleShort) hash ^= turn ? BLACK_CASTLE_SHORT_HASH : WHITE_CASTLE_SHORT_HASH;
+        if (s[turn].castleLong) hash ^= turn ? BLACK_CASTLE_LONG_HASH : WHITE_CASTLE_LONG_HASH;
         s[turn].castleShort = false;
         s[turn].castleLong = false;
+
         maskClearBitBoard(ROOK, turn, toBitboard<<1ull);
         maskSetBitBoard(ROOK, turn, toBitboard>>1ull);
-
+        hash ^= tt->BOARDPOS_HASH[turn][ROOK][to-1];
+        hash ^= tt->BOARDPOS_HASH[turn][ROOK][to+1];
     } else if (fromPiece == KING && s[turn].castleLong && from-to == 2) {
-        s[turn].castled = true;
+        if (s[turn].castleShort) hash ^= turn ? BLACK_CASTLE_SHORT_HASH : WHITE_CASTLE_SHORT_HASH;
+        if (s[turn].castleLong) hash ^= turn ? BLACK_CASTLE_LONG_HASH : WHITE_CASTLE_LONG_HASH;
         s[turn].castleShort = false;
         s[turn].castleLong = false;
+
         maskClearBitBoard(ROOK, turn, toBitboard>>2ull);
         maskSetBitBoard(ROOK, turn, toBitboard<<1ull);
+        hash ^= tt->BOARDPOS_HASH[turn][ROOK][to-2];
+        hash ^= tt->BOARDPOS_HASH[turn][ROOK][to+1];
     } 
 
     // Can no longer castle because moved king or rook:
     else if (fromPiece == KING) {
+        if (s[turn].castleShort) hash ^= turn ? BLACK_CASTLE_SHORT_HASH : WHITE_CASTLE_SHORT_HASH;
+        if (s[turn].castleLong) hash ^= turn ? BLACK_CASTLE_LONG_HASH : WHITE_CASTLE_LONG_HASH;
         s[turn].castleShort = false;
         s[turn].castleLong = false;
-    } else if (fromPiece == ROOK && (from % 8 == 7) && (from / 8 == turn*7)) {
+    } else if (s[turn].castleShort && fromPiece == ROOK && (from % 8 == 7) && (from / 8 == turn*7)) {
         s[turn].castleShort = false;
-    } else if (fromPiece == ROOK && (from % 8 == 0) && (from / 8 == turn*7)) {
+        hash ^= turn ? BLACK_CASTLE_SHORT_HASH : WHITE_CASTLE_SHORT_HASH;
+    } else if (s[turn].castleLong && fromPiece == ROOK && (from % 8 == 0) && (from / 8 == turn*7)) {
         s[turn].castleLong = false;
+        hash ^= turn ? BLACK_CASTLE_LONG_HASH : WHITE_CASTLE_LONG_HASH;
     }
 
     // Can no longer castle becaue our rook was captured
-    if (toPiece == ROOK && (to % 8 == 7) && (to / 8 == (!turn)*7)) {
+    if (s[!turn].castleShort && toPiece == ROOK && (to % 8 == 7) && (to / 8 == (!turn)*7)) {
         s[!turn].castleShort = false;
-    } else if (toPiece == ROOK && (to % 8 == 0) && (to / 8 == (!turn)*7)) {
+        hash ^= turn ? WHITE_CASTLE_SHORT_HASH : BLACK_CASTLE_SHORT_HASH;
+    } else if (s[!turn].castleLong && toPiece == ROOK && (to % 8 == 0) && (to / 8 == (!turn)*7)) {
         s[!turn].castleLong = false;
+        hash ^= turn ? WHITE_CASTLE_LONG_HASH : BLACK_CASTLE_LONG_HASH;
     }
 
     changeTurn();
     moves++;
+
     recalculateOccupancy();
     recalculateThreats();
     validateBitBoard();
-    return toPiece;
 }
 
 bool BitBoard::isAvailable(uint8_t const pos) const {
@@ -602,7 +634,7 @@ inline uint32_t BitBoard::searchStraight(uint64_t bitboard, uint64_t shiftFunc(u
 
             if (!capturesOnly || (sftBoard & ~enemy)) {
                 newpos = __builtin_ctzll(sftBoard);
-                *(moves++) = Move(pos, newpos);
+                *(moves++) = Move(pos, newpos, (sftBoard & ~enemy) ? CAPTURE_MOVE : DEFAULT_MOVE);
                 numMoves++;
             }
 
@@ -641,10 +673,10 @@ uint32_t BitBoard::getPawnMoves(std::array<Move,MAX_MOVES>::iterator& moves, boo
                 newpos = __builtin_ctzll(s1);
                 // Promotion
                 if ((newpos / 8 == 0) || (newpos / 8 == 7)) {
-                    *(moves++) = Move(pos, newpos, ROOK);
-                    *(moves++) = Move(pos, newpos, QUEEN);
-                    *(moves++) = Move(pos, newpos, KNIGHT);
-                    *(moves++) = Move(pos, newpos, BISHOP);
+                    *(moves++) = Move(pos, newpos, PROMOTION_MOVE, QUEEN);
+                    *(moves++) = Move(pos, newpos, PROMOTION_MOVE, KNIGHT);
+                    *(moves++) = Move(pos, newpos, PROMOTION_MOVE, ROOK);
+                    *(moves++) = Move(pos, newpos, PROMOTION_MOVE, BISHOP);
                     numMoves += 4;
                 } else {
                     *(moves++) = Move(pos, newpos);
@@ -671,13 +703,13 @@ uint32_t BitBoard::getPawnMoves(std::array<Move,MAX_MOVES>::iterator& moves, boo
             uint64_t m = attacks & -attacks;
             newpos = __builtin_ctzll(m);
             if (newpos / 8 == 0 || newpos / 8 == 7) {
-                *(moves++) = Move(pos, newpos, ROOK);
-                *(moves++) = Move(pos, newpos, QUEEN);
-                *(moves++) = Move(pos, newpos, KNIGHT);
-                *(moves++) = Move(pos, newpos, BISHOP);
+                *(moves++) = Move(pos, newpos, PROMOTE_CAPTURE, QUEEN);
+                *(moves++) = Move(pos, newpos, PROMOTE_CAPTURE, KNIGHT);
+                *(moves++) = Move(pos, newpos, PROMOTE_CAPTURE, ROOK);
+                *(moves++) = Move(pos, newpos, PROMOTE_CAPTURE, BISHOP);
                 numMoves += 4;
             } else {
-                *(moves++) = Move(pos, newpos);
+                *(moves++) = Move(pos, newpos, (m & ep) ? EN_PASSANT_MOVE : CAPTURE_MOVE);
                 numMoves++;
             }
             attacks &= attacks - 1;
@@ -710,7 +742,7 @@ uint32_t BitBoard::getKingMoves(std::array<Move,MAX_MOVES>::iterator& moves, boo
             if (sftBoard) maskIfPositionAttacked(sftBoard, turn);
             if (sftBoard) {
                 newpos = __builtin_ctzll(sftBoard);
-                *(moves++) = Move(pos, newpos);
+                *(moves++) = Move(pos, newpos, CASTLE_MOVE);
                 numMoves++;
             }
         }
@@ -727,7 +759,7 @@ uint32_t BitBoard::getKingMoves(std::array<Move,MAX_MOVES>::iterator& moves, boo
             sftBoard = shiftWest(sftBoard);
             sftBoard &= friendly & enemy;
             if (sftBoard) {
-                *(moves++) = Move(pos, newpos);
+                *(moves++) = Move(pos, newpos, CASTLE_MOVE);
                 numMoves++;
             }
         }
@@ -739,7 +771,7 @@ uint32_t BitBoard::getKingMoves(std::array<Move,MAX_MOVES>::iterator& moves, boo
     while (attacks) {
         uint64_t m = attacks & -attacks;
         newpos = __builtin_ctzll(m);
-        *(moves++) = Move(pos, newpos);
+        *(moves++) = Move(pos, newpos, (m & ~enemy) ? CAPTURE_MOVE : DEFAULT_MOVE);
         numMoves++;
         attacks &= attacks - 1;
     }
@@ -752,6 +784,7 @@ uint32_t BitBoard::getKnightMoves(std::array<Move,MAX_MOVES>::iterator& moves, b
     uint64_t bb = p[turn].knight;
     uint32_t numMoves = 0;
     uint64_t friendly = ~s[turn].occupancy;
+    uint64_t enemy = ~s[!turn].occupancy;
 
     while (bb) {
         // Isolate the least significant bit and find it
@@ -763,7 +796,7 @@ uint32_t BitBoard::getKnightMoves(std::array<Move,MAX_MOVES>::iterator& moves, b
         while (attacks) {
             uint64_t m = attacks & -attacks;
             newpos = __builtin_ctzll(m);
-            *(moves++) = Move(pos, newpos);
+            *(moves++) = Move(pos, newpos, (m & ~enemy) ? CAPTURE_MOVE : DEFAULT_MOVE);
             numMoves++;
             attacks &= attacks - 1;
         }
@@ -834,16 +867,23 @@ int32_t BitBoard::evaluateKingSafety() const {
 }
 
 int32_t BitBoard::estimateMoveValue(Move const& move) const {
+    static constexpr int32_t CAPTURE_BONUS = 150;
+    static constexpr int32_t CASTLE_BONUS = 100;
+
     int32_t value = 0;
     uint64_t to_bb = 1ull << move.to;
     bool target_defended = s[!turn].mobility & to_bb;
+
+    value += move.moveData.isCapture * CAPTURE_BONUS;
+    value += move.moveData.isCastle * CASTLE_BONUS;
+    value += move.moveData.isEnPassant * PAWN_VALUE_MG;
 
     // Benefit to put our piece on a good square
     value += pstDelta(move);
     
     // Most valuable target, least valuable attacker. Don't care about attacker if target is not defended
     value += getPieceValue(getPiece(p[!turn], move.to));
-    value -= (target_defended) ? getPieceValue(getPiece(p[turn], move.from)) : 0;
+    value -= target_defended * getPieceValue(getPiece(p[turn], move.from));
     
     value += getPieceValue(move.promote);
 
@@ -852,31 +892,7 @@ int32_t BitBoard::estimateMoveValue(Move const& move) const {
 
 inline int32_t BitBoard::pstDelta(Move const& move) const {
     enum Piece source = getPiece(p[turn], move.from);
-    const int32_t (*pst)[64];
-    switch (source) {
-        case PAWN:
-            pst = moves < ENDGAME_CUTOFF ? &PST_MG_P : &PST_EG_P;
-            break;
-        case KNIGHT:
-            pst = moves < ENDGAME_CUTOFF ? &PST_MG_N : &PST_EG_N;
-            break;
-        case BISHOP:
-            pst = moves < ENDGAME_CUTOFF ? &PST_MG_B : &PST_EG_B;
-            break;
-        case ROOK:
-            pst = moves < ENDGAME_CUTOFF ? &PST_MG_R : &PST_EG_R;
-            break;
-        case QUEEN:
-            pst = moves < ENDGAME_CUTOFF ? &PST_MG_Q : &PST_EG_Q;
-            break;
-        case KING:
-            pst = moves < ENDGAME_CUTOFF ? &PST_MG_K : &PST_EG_K;
-            break;
-        default:
-            assert(0);
-
-    }
-
+    int32_t pst;
     uint8_t from = move.from;
     uint8_t to = move.to;
     if (!turn) {
@@ -889,19 +905,59 @@ inline int32_t BitBoard::pstDelta(Move const& move) const {
         from = (row * 8 + col);
     }
 
-    return Evaluate::PST_FACTOR * ((*pst)[to] - (*pst)[from]);
+    float egBlend = calculateEndgameBlendFactor();
+    float mgBlend = 1-egBlend;
+
+    switch (source) {
+        case PAWN:
+            pst = mgBlend*(PST_MG_P[to]-PST_MG_P[from]) + egBlend*(PST_EG_P[to]-PST_EG_P[from]);
+            break;
+        case KNIGHT:
+            pst = mgBlend*(PST_MG_N[to]-PST_MG_N[from]) + egBlend*(PST_EG_N[to]-PST_EG_N[from]);
+            break;
+        case BISHOP:
+            pst = mgBlend*(PST_MG_B[to]-PST_MG_B[from]) + egBlend*(PST_EG_B[to]-PST_EG_B[from]);
+            break;
+        case ROOK:
+            pst = mgBlend*(PST_MG_R[to]-PST_MG_R[from]) + egBlend*(PST_EG_R[to]-PST_EG_R[from]);
+            break;
+        case QUEEN:
+            pst = mgBlend*(PST_MG_Q[to]-PST_MG_Q[from]) + egBlend*(PST_EG_Q[to]-PST_EG_Q[from]);
+            break;
+        case KING:
+            pst = mgBlend*(PST_MG_K[to]-PST_MG_K[from]) + egBlend*(PST_EG_K[to]-PST_EG_K[from]);
+            break;
+        default:
+            assert(0);
+
+    }
+
+    return Evaluate::PST_FACTOR * pst;
+}
+
+float BitBoard::calculateEndgameBlendFactor() const {
+    uint32_t material = 0;
+    static constexpr uint32_t maxMaterial = QUEEN_VALUE_MG + (2*KNIGHT_VALUE_MG) + (2*BISHOP_VALUE_MG) + (2*ROOK_VALUE_MG);
+    static constexpr uint32_t egCutoff = QUEEN_VALUE_MG - PAWN_VALUE_MG;
+
+    // Only count opponents non-pawn material
+    material += __builtin_popcountll(p[!turn].queen) * QUEEN_VALUE_MG;
+    material += __builtin_popcountll(p[!turn].knight) * KNIGHT_VALUE_MG;
+    material += __builtin_popcountll(p[!turn].bishop) * BISHOP_VALUE_MG;
+    material += __builtin_popcountll(p[!turn].rook) * ROOK_VALUE_MG;
+
+    if (material <= egCutoff) return 1;
+
+    return 1 - (static_cast<float>(material - egCutoff) / static_cast<float>(maxMaterial - egCutoff));
 }
 
 void BitBoard::sortMoves(std::array<Move,MAX_MOVES>& moves,
-                                uint8_t numMoves) const 
+                                uint8_t numMoves, Move const& ttMove) const 
 {
-    // This sort will return "prefer center" if there are no captures. 
-    // If there are captures, prefer moves that capture high value targets
+    for (uint8_t i = 0; i < numMoves; i++) {
+        moves[i].value = estimateMoveValue(moves[i]);
+        if (moves[i] == ttMove) moves[i].value += 10000;
+    }
     std::sort(moves.begin(), moves.begin() + numMoves,
-            [&] (Move m1, Move m2) { return estimateMoveValue(m1) > estimateMoveValue(m2); });
-}
-
-bool BitBoard::canReduce(Move const& move) const {
-    // Do not reduce captures
-    return !isOccupied(move.to);
+            [&] (Move m1, Move m2) { return m1.value > m2.value; });
 }

@@ -14,8 +14,24 @@
 #include "bitboard.hpp"
 #include "defines.hpp"
 #include "evaluate.hpp"
+#include "transpositionTables.hpp"
+#include "perftTests.hpp"
 
 using namespace std;
+
+CommandParser::CommandParser(SohilBot* pSohilBot) {
+    cmd = pSohilBot;
+    isActive = false;
+    debugMode = false;
+    pEngine = new Engine(cmd);
+    tt = new TT();
+    board = BitBoard(tt, true);
+}
+
+CommandParser::~CommandParser() { 
+    delete pEngine;
+    delete tt;
+};
 
 /**
  * @brief Main command processing loop that handles UCI protocol commands
@@ -71,6 +87,8 @@ void CommandParser::handleActiveCommand(const string& line) {
         handleSetOption(ss);
     } else if (command == "perft") {
         handlePerft(ss);
+    } else if (command == "test") {
+        handleTest();
     } else if (command == "debug") {
         handleDebug(ss);
     } else if (command == "eval") {
@@ -97,14 +115,14 @@ void CommandParser::handleInactiveCommand(const string& line) {
  * @brief Handles the "isready" command
  */
 void CommandParser::handleIsReady() {
-    cout << "readyok" << endl;
+    cmd->uciOutput("readyok");
 }
 
 /**
  * @brief Handles the "ucinewgame" command
  */
 void CommandParser::handleNewGame() {
-    board = BitBoard(true);
+    board = BitBoard(tt, true);
 }
 
 /**
@@ -113,7 +131,9 @@ void CommandParser::handleNewGame() {
 void CommandParser::handleEval() {
     board.printBoard();
     board.printMobility();
+    float egBlend = board.calculateEndgameBlendFactor();
     std::cout << "Evaluation: " << std::dec << Evaluate::evaluatePosition(board) << std::endl;
+    std::cout << "EG Blend Factor: " << egBlend << std::endl;
 }
 
 /**
@@ -123,10 +143,11 @@ void CommandParser::handleEval() {
 void CommandParser::handleMove(std::stringstream& ss) {
     using namespace BitBoardState;
     std::string args;
-    BitBoard::MoveType move;
+    BitBoard::Move move;
     getline(ss, args,' ');
     board.strToMove(args, move);
     board.movePiece(move);
+    board.history.insert(board.hash);
     board.printBoard();
 }
 
@@ -137,7 +158,7 @@ void CommandParser::handleListMoves() {
     using namespace BitBoardState;
     std::array<BitBoard::Move,MAX_MOVES> moves;
     uint8_t numMoves = board.getAvailableMoves(moves);
-    board.sortMoves(moves, numMoves);
+    board.sortMoves(moves, numMoves, BitBoard::Move());
     cout << "legal moves:" << endl;
     for (auto move = moves.begin(); move != moves.begin() + numMoves; move++) {
         cout << BitBoard::moveToStr(*move) << " est val: " << board.estimateMoveValue(*move) << endl;
@@ -177,15 +198,57 @@ void CommandParser::handlePosition(std::stringstream& ss) {
  */
 void CommandParser::handleGo(std::stringstream& ss) {
     std::string command;
-    getline(ss, command, ' ');
-    
-    if (command == "infinite") {
-        handleInfiniteSearch();
-    } else if (command == "movetime") {
-        handleMoveTimeSearch(ss);
-    } else if (command == "depth") {
-        handleDepthSearch(ss);
+    uint32_t time = INFINITE_TIMELIMIT;
+    uint8_t depth = MAX_DEPTH;
+    uint32_t timeLeft = 0;
+    uint32_t inc = 0;
+
+    while(getline(ss, command, ' ')) {
+        if (command == "infinite") {
+            time = INFINITE_TIMELIMIT;
+            depth = MAX_DEPTH;
+            break;
+        } else if (command == "movetime") {
+            getline(ss, command, ' ');
+            time = stoi(command);
+        } else if (command == "depth") {
+            getline(ss, command, ' ');
+            depth = stoi(command);
+        } else if (command == "wtime") {
+            getline(ss, command, ' ');
+            if (board.turn == BitBoardState::WHITE) timeLeft = stoi(command);
+        } else if (command == "btime") {
+            getline(ss, command, ' ');
+            if (board.turn == BitBoardState::BLACK) timeLeft = stoi(command);
+        } else if (command == "winc") {
+            getline(ss, command, ' ');
+            if (board.turn == BitBoardState::WHITE) inc = stoi(command);
+        } else if (command == "binc") {
+            getline(ss, command, ' ');
+            if (board.turn == BitBoardState::BLACK) inc = stoi(command);
+        } else if (command == "movestogo") {
+            getline(ss, command, ' ');
+            // Do nothing
+        } else if (command == "nodes") {
+            getline(ss, command, ' ');
+            // Do nothing
+        } else if (command == "mate") {
+            getline(ss, command, ' ');
+            // Do nothing
+        } else if (command == "ponder") {
+            // Do nothing
+        }
     }
+
+    if (timeLeft > 0) {
+        // Calculate how much time we should spend on this move
+        time = timeLeft / 50;
+        time += inc;
+        time -= TIME_BUFFER;
+    }
+
+    besteval = pEngine->searchBestMove(board, bestmove, depth, time);
+    cmd->uciOutput("bestmove " + BitBoard::moveToStr(bestmove));
 }
 
 /**
@@ -198,9 +261,7 @@ void CommandParser::handleSetOption(std::stringstream& ss) {
     assert(command == "name");
     getline(ss, command, ' ');
     
-    if (command == "depth") {
-        handleDepthOption(ss);
-    } else if (command == "MultiPV") {
+    if (command == "MultiPV") {
         handleMultiPVOption(ss);
     }
 }
@@ -213,8 +274,43 @@ void CommandParser::handlePerft(std::stringstream& ss) {
     std::string command;
     getline(ss, command, ' ');
     const auto start = std::chrono::high_resolution_clock::now();
-    uint64_t npos = pEngine->perft(board, stoi(command), true);
-    printPerftResults(npos, start);
+    
+    Engine::PerftResult result;
+    std::memset(&result, 0, sizeof(Engine::PerftResult));
+    pEngine->perft(result, board, stoi(command), true);
+    
+    printPerftResults(result, start);
+}
+
+/**
+ * @brief Handles the "test" command
+ * @param ss String stream containing the test parameters
+ */
+void CommandParser::handleTest() {
+    Engine::PerftResult result;
+    const auto start = std::chrono::high_resolution_clock::now();
+
+    for (auto test : PerftTests::tests) {
+        std::stringstream fen;
+        fen << test.fen;
+        handleFENPosition(fen);
+        std::memset(&result, 0, sizeof(Engine::PerftResult));
+        const auto tempStart = std::chrono::high_resolution_clock::now();
+        pEngine->perft(result, board, test.depth, false);
+        const auto end = std::chrono::high_resolution_clock::now();
+        const auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - tempStart);
+       
+        PerftTests::printStatus(test, result);
+        std::cout << "took " << to_string(time.count()) << "ms";
+        uint64_t rate = result.nodes / time.count();
+        std::cout << "  |  Searchrate: " << to_string(rate) << "k nodes/sec" << endl;
+        std::cout << endl;
+    }
+
+    const auto end = std::chrono::high_resolution_clock::now();
+    const auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Total time: " << to_string(time.count()) << "ms" << endl;
+
 }
 
 /**
@@ -243,7 +339,6 @@ void CommandParser::initializeEngine() {
     if (debugMode) {
         std::cout << "// [DEBUG; ACTIVE] got command \"uci\", setting to ACTIVE" << endl;
     }
-    pEngine = new Engine();
     isActive = true;
     sendEngineInfo();
 }
@@ -263,16 +358,11 @@ void CommandParser::logUnhandledCommand(const string& line) {
  * @brief Sends engine info to the GUI
  */
 void CommandParser::sendEngineInfo() {
-    cout << "id name sohilbot" << endl;
-    cout << "id author Sohil Shah" << endl;
-    cout << "option name depth type spin default " 
-         << to_string(depth) 
-         << " min 2 max " << to_string(MAX_DEPTH)
-         << endl;
-    cout << "option name MultiPV type spin default 1" 
-         << " min 1 max " << to_string(MAX_PVS)
-         << endl;
-    cout << "uciok" << endl;
+    cmd->uciOutput("id name sohilbot");
+    cmd->uciOutput("id author Sohil Shah");
+    cmd->uciOutput("option name MultiPV type spin default 1" 
+                        " min 1 max " + to_string(MAX_PVS));
+    cmd->uciOutput("uciok");
 }
 
 /**
@@ -281,15 +371,15 @@ void CommandParser::sendEngineInfo() {
  * @param board Board to apply the moves to
  * @return Success status (1 for success)
  */
-int CommandParser::handleNewPosition(std::vector<std::string>& moves, 
-                                     BitBoard& board) {
+int CommandParser::handleNewPosition(std::vector<std::string>& moves) {
     int success = 0;
     using namespace BitBoardState;
 
     for (auto args : moves) {
-        BitBoard::MoveType move;
+        BitBoard::Move move;
         BitBoard::strToMove(args, move);
         board.movePiece(move);
+        board.history.insert(board.hash);
     }
     return success;
 }
@@ -302,7 +392,7 @@ int CommandParser::handleNewPosition(std::vector<std::string>& moves,
 int CommandParser::handleFENPosition(std::stringstream& ss) {
     std::string command;
     getline(ss, command, ' ');
-    board = BitBoard(false); // Empty board
+    board = BitBoard(tt, false); // Empty board
     uint8_t pos = 56; 
     for (char c : command) {
         if (c == '/') { pos -= 16; continue; }
@@ -350,6 +440,8 @@ int CommandParser::handleFENPosition(std::stringstream& ss) {
     // fullmoves
     getline(ss, command, ' ');
 
+    board.hash = tt->genHash(board);
+
     getline(ss, command, ' ');
     if (command == "moves") {
         std::vector<std::string> moves;
@@ -357,60 +449,13 @@ int CommandParser::handleFENPosition(std::stringstream& ss) {
         while(getline(ss, move, ' ')) { 
             moves.push_back(move); 
         }
-        handleNewPosition(moves, board);
+        handleNewPosition(moves);
     }
 
-    //board.hash = tt->genHash(board);
     board.value = board.getBoardValue();
     board.recalculateOccupancy();
     board.recalculateThreats();
     return 1;
-}
-
-/**
- * @brief Handles infinite search mode
- */
-void CommandParser::handleInfiniteSearch() {
-    using namespace BitBoardState;
-    besteval = pEngine->searchBestMove(board, bestmove, depth, INFINITE_TIMELIMIT);
-    std::cout << "bestmove " << BitBoard::moveToStr(bestmove) << endl;
-    std::cout << "Evaluation: " << besteval << endl;
-}
-
-/**
- * @brief Handles search with specific move time
- * @param ss String stream containing the move time parameter
- */
-void CommandParser::handleMoveTimeSearch(std::stringstream& ss) {
-    std::string command;
-    getline(ss, command, ' ');
-    using namespace BitBoardState;
-    besteval = pEngine->searchBestMove(board, bestmove, depth, stoi(command));
-    std::cout << "bestmove " << BitBoard::moveToStr(bestmove) << endl;
-}
-
-/**
- * @brief Handles search with specific depth
- * @param ss String stream containing the depth parameter
- */
-void CommandParser::handleDepthSearch(std::stringstream& ss) {
-    std::string command;
-    getline(ss, command, ' ');
-    using namespace BitBoardState;
-    besteval = pEngine->searchBestMove(board, bestmove, stoi(command), INFINITE_TIMELIMIT);
-    std::cout << "bestmove " << BitBoard::moveToStr(bestmove) << endl;
-}
-
-/**
- * @brief Handles setting the depth option
- * @param ss String stream containing the depth value
- */
-void CommandParser::handleDepthOption(std::stringstream& ss) {
-    std::string command;
-    getline(ss, command, ' ');
-    assert(command == "value");
-    getline(ss, command, ' ');
-    depth = stoi(command);
 }
 
 /**
@@ -431,7 +476,7 @@ void CommandParser::handleMultiPVOption(std::stringstream& ss) {
  * @param ss String stream containing the position parameters
  */
 void CommandParser::handleStartPosition(std::stringstream& ss) {
-    board = BitBoard(true);
+    board = BitBoard(tt, true);
     std::string command;
     getline(ss, command, ' ');
     if (command == "moves") {
@@ -440,7 +485,7 @@ void CommandParser::handleStartPosition(std::stringstream& ss) {
         while(getline(ss, move, ' ')) { 
             moves.push_back(move); 
         }
-        handleNewPosition(moves, board);
+        handleNewPosition(moves);
     }
 }
 
@@ -449,12 +494,20 @@ void CommandParser::handleStartPosition(std::stringstream& ss) {
  * @param npos Number of positions searched
  * @param start Start time of the search
  */
-void CommandParser::printPerftResults(uint64_t npos, std::chrono::high_resolution_clock::time_point start) {
-    std::cout << "Total positions searched: " << to_string(npos) << endl;
+void CommandParser::printPerftResults(struct Engine::PerftResult const& result, 
+                                     std::chrono::high_resolution_clock::time_point start) 
+{
+    std::cout << "Total captures: " << std::to_string(result.captures) << std::endl;
+    std::cout << "Total checks: " << std::to_string(result.checks) << std::endl;
+    std::cout << "Total promotes: " << std::to_string(result.promotions) << std::endl;
+    std::cout << "Total castles: " << std::to_string(result.castles) << std::endl;
+    std::cout << "Total en passant: " << std::to_string(result.enpassants) << std::endl;
+    
+    std::cout << "Total positions searched: " << to_string(result.nodes) << endl;
     const auto end = std::chrono::high_resolution_clock::now();
     const auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Elapsed time: " << to_string(time.count()) << "ms" << endl;
-    uint64_t rate = npos / time.count();
+    uint64_t rate = result.nodes / time.count();
     std::cout << "Searchrate: " << to_string(rate) << "k nodes/sec" << endl;
 }
 

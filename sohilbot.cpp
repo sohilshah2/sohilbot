@@ -3,14 +3,44 @@
 #include <string>
 #include <fstream>
 #include <ctime>
+#include "sohilbot.hpp"
 #include "commandParser.hpp"
-#include "engine.hpp"
 
-// Global log file stream
-std::ofstream logFile;
+SohilBot::SohilBot() {
+    // Open log file with timestamp in name
+    auto now = std::time(nullptr);
+    auto tm = *std::localtime(&now);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "logs/sohilbot_debug_log%Y%m%d_%H%M%S.txt");
+    SohilBot::logFile.open(oss.str());
+    
+    if (!SohilBot::logFile.is_open()) {
+        throw std::runtime_error("Failed to open log file: " + oss.str());
+    }
+
+    parser = new CommandParser(this);
+}
+
+SohilBot::~SohilBot() {
+    SohilBot::logFile.close();
+    delete parser;
+}
+
+// Helper function to log to both stdout and file
+void SohilBot::uciOutput(const std::string& message, bool addTimestamp, bool logToStdout) {
+    #ifdef LOG_ON
+    if (addTimestamp) {
+        SohilBot::logFile << "[" << getTimestamp() << "] ";
+    }
+    SohilBot::logFile << message << std::endl;
+    #endif
+    if (logToStdout) {
+        std::cout << message << std::endl;
+    }
+}
 
 // Function to get current timestamp
-std::string getTimestamp() {
+std::string SohilBot::getTimestamp() {
     auto now = std::time(nullptr);
     auto tm = *std::localtime(&now);
     std::ostringstream oss;
@@ -18,15 +48,16 @@ std::string getTimestamp() {
     return oss.str();
 }
 
-void commandLineThread(CommandParser* parser) {
+void SohilBot::commandLineThread() {
     std::string line;
     std::thread commandParserThread;
+
     bool threadActive = false;
 
     while (true) {
         if (getline(std::cin, line)) {
-            // Log the command to file
-            logFile << "[" << getTimestamp() << "] Command received: " << line << std::endl;
+            // Log the command to file 
+            uciOutput("Received command: " + line, true, false);
 
             if (line == "quit" || line == "stop") {
                 if (threadActive) {
@@ -36,8 +67,11 @@ void commandLineThread(CommandParser* parser) {
                 }
                 if (line == "quit") break;
             } else {
-                if (line == "isready") std::cout << "readyok" << std::endl;
-                else {
+                if (line == "isready") {
+                    if (threadActive) commandParserThread.join();
+                    SohilBot::uciOutput("readyok");
+                    threadActive = false;
+                } else {
                     if (threadActive) commandParserThread.join();
                     // Create the command parser thread to process this line
                     commandParserThread = std::thread(&CommandParser::process, parser, line);
@@ -57,31 +91,14 @@ void commandLineThread(CommandParser* parser) {
 }
 
 int main() {
-    // Open log file with timestamp in name
-    auto now = std::time(nullptr);
-    auto tm = *std::localtime(&now);
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "logs/sohilbot_debug_log%Y%m%d_%H%M%S.txt");
-    logFile.open(oss.str());
-    
-    if (!logFile.is_open()) {
-        std::cerr << "Failed to open log file!" << std::endl;
-        return 1;
-    }
-    
-    logFile << "[" << getTimestamp() << "] Chess engine started" << std::endl;
-    
-    CommandParser* parser = new CommandParser();
+    SohilBot* sohilbot = new SohilBot();
     
     // Create the command line input thread
-    std::thread cmdLineThread(commandLineThread, parser);
+    std::thread cmdLineThread(&SohilBot::commandLineThread, sohilbot);
     
     // Wait for the command line thread to finish
     cmdLineThread.join();
     
-    logFile << "[" << getTimestamp() << "] Chess engine stopped" << std::endl;
-    logFile.close();
-    
-    delete parser;
+    delete sohilbot;
     return 0;
 }

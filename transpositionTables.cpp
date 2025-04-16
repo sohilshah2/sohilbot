@@ -5,20 +5,23 @@
 
 TT::TT()
 {
-    for (uint8_t pos = 0; pos < 64; pos++) {
-        for (uint8_t piece = 0; piece < 16; piece++) {
-            uint64_t random =
-                (((uint64_t) rand() <<  0) & 0x000000000000FFFFull) ^ 
-                (((uint64_t) rand() << 16) & 0x00000000FFFF0000ull) ^ 
-                (((uint64_t) rand() << 32) & 0x0000FFFF00000000ull) ^
-                (((uint64_t) rand() << 48) & 0xFFFF000000000000ull);
+    for (uint8_t c = 0; c < 2; c++) {
+        for (uint8_t pos = 0; pos < 64; pos++) {
+            for (uint8_t piece = 0; piece < 8; piece++) {
+                uint64_t random =
+                    (((uint64_t) rand() <<  0) & 0x000000000000FFFFull) | 
+                    (((uint64_t) rand() << 16) & 0x00000000FFFF0000ull) | 
+                    (((uint64_t) rand() << 32) & 0x0000FFFF00000000ull) |
+                    (((uint64_t) rand() << 48) & 0xFFFF000000000000ull);
 
-            BOARDPOS_HASH[pos][piece] = random;
+                BOARDPOS_HASH[c][piece][pos] = random;
+            }
         }
     }
+    clear();
 }
 
-TT::TTEntry const& TT::lookupHash(uint64_t const hash) const 
+TT::TTEntry& TT::lookupHash(uint64_t const hash) 
 {
     size_t idx = getIdx(hash);
     return table[idx];
@@ -40,27 +43,38 @@ void TT::printEstimatedOccupancy() const
               << "%" << std::endl;
 }
 
-void TT::updateEntry(BoardState::BoardType const& board, BoardState::Move const move,
-                 int32_t const eval, uint8_t const depth)
+void TT::updateEntry(BitBoard const& board, BitBoard::Move const& move,
+                     int32_t const eval, uint8_t const depth, NodeType const node)
 {
-    size_t idx = getIdx(board.hash);
-    TTEntry& entry = table[idx];
+    TTEntry& entry = lookupHash(board.hash);
     entry.eval = eval;
     entry.depth = depth;
     entry.hash = board.hash;
     entry.move = move;
+    entry.node = node;
 }
 
-uint64_t TT::genHash(BoardState::BoardType const& board) const 
+uint64_t TT::genHash(BitBoard const& board) const 
 {
-    using namespace BoardState;
+    using namespace BitBoardState;
     uint64_t hash;
-    hash = board.turn == BoardState::WHITE ? TURN_HASH_WHITE : 0;
-    //hash ^= EN_PASSANT_HASH*board.cached[board.turn].enPassantSquare;
+    hash = board.turn == WHITE ? TURN_HASH_WHITE : 0;
 
-    // TODO FIX THIS
-    //uint8_t pieceData = getPiece(board.p[0], pos) | getPiece(board.p[1], pos);
+    hash ^= EN_PASSANT_HASH * board.s[WHITE].enPassantSquare;
+    hash ^= EN_PASSANT_HASH * board.s[BLACK].enPassantSquare;
 
-    //hash ^= BOARDPOS_HASH[pos][pieceData];
+    hash ^= WHITE_CASTLE_LONG_HASH * board.s[WHITE].castleLong;
+    hash ^= WHITE_CASTLE_SHORT_HASH * board.s[WHITE].castleShort;
+    hash ^= BLACK_CASTLE_LONG_HASH * board.s[BLACK].castleLong;
+    hash ^= BLACK_CASTLE_SHORT_HASH * board.s[BLACK].castleShort;
+
+    for (uint8_t c = 0; c < 2; c++) {
+        for (uint8_t pos = 0; pos < 64; pos++) {
+            uint8_t pieceData = board.getPiece(board.p[c], pos);
+            if (pieceData) {
+                hash ^= BOARDPOS_HASH[c][pieceData][pos];
+            }
+        }
+    }
     return hash;
 }
