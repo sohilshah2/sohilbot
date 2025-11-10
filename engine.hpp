@@ -66,6 +66,10 @@ class Engine {
 
         void sendEngineInfo(uint8_t depth);
         void printSearchStats() const;
+        void extendSearch(uint8_t& depth, bool inCheck) const;
+        uint8_t reduce(uint8_t const currdepth, uint8_t const maxdepth, uint8_t movesSearched);
+        bool updatePvs(int32_t& alpha, BitBoard::Move* move,
+                       int32_t newEval, uint8_t const currdepth);
 
         struct Line currPvs[MAX_PVS][MAX_DEPTH];
         struct Line pvs[MAX_PVS];
@@ -83,6 +87,7 @@ class Engine {
         uint32_t aspirationRetries=0;
         uint8_t depthIter=0;
         uint8_t seldepth=0;
+        uint8_t quiesceDepth=0;
         uint32_t timelimit=3000;
         std::chrono::time_point<std::chrono::steady_clock> timeStart;
         float prevTime;

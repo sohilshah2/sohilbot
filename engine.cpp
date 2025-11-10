@@ -26,6 +26,8 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
     seldepth = 0;
     shouldStop = false;
 
+    depth = std::min(static_cast<int>(depth), MAX_DEPTH-1);
+
     int32_t alpha = NEG_INF;
     int32_t beta = INF;
 
@@ -34,6 +36,7 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
     memset(&currPvs, 0, sizeof(Line)*MAX_DEPTH*MAX_PVS);
     memset(&pvs, 0, sizeof(Line)*MAX_PVS);
 
+    board.tt->clearHistory();
 
     // Initialize evals to -INF
     for (uint8_t pv = 0; pv < numPvs; pv++) {
@@ -50,6 +53,10 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
         numNullReductions = 0;
         numRedos = 0;
         branches = 0;
+
+        quiesceDepth = std::min(depthIter * 2, MAX_DEPTH-1);
+
+        board.tt->clearHistory();
         do {
             #ifdef ENABLE_ASPIRATION
             if (aspirationRetries > 2) {
@@ -91,9 +98,18 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
     board = oldBoard;
 
 #ifdef SEARCH_STATS_ON
-    printSearchStats();
     board.tt->printEstimatedOccupancy();
+    printSearchStats();
 #endif
+/*
+    std::cout << "History scores  |  Move scores" << std::endl;
+    std::array<BitBoard::Move,MAX_MOVES> moves;
+    uint8_t numMoves = board.getAvailableMoves(moves);
+    board.sortMoves(moves, numMoves, BitBoard::Move());
+    for (uint8_t i = 0; i < numMoves; i++) {
+        std::cout << BitBoard::moveToStr(moves[i]) << ": " << std::to_string(board.tt->getHistoryScore(board.turn, moves[i])) 
+                  << "  |  " << std::to_string(moves[i].value) << std::endl;
+    }*/
 
     move = pvs[0].moves[0];
     return pvs[0].eval;
@@ -112,7 +128,7 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
     #ifndef ENABLE_QUIESCE
     return staticEval;
     #endif
-    if (currdepth == MAX_DEPTH-1) return staticEval;
+    if (currdepth == quiesceDepth) return staticEval;
     if (staticEval >= beta) return staticEval;
     if (staticEval > alpha) alpha = staticEval;
 
@@ -142,6 +158,67 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
     }
 
     return bestEval;
+}
+
+inline void Engine::extendSearch(uint8_t& depth, bool inCheck) const {
+    if (depth >= quiesceDepth) return;
+    if (depth < quiesceDepth-1 && inCheck) depth+=2;
+}
+
+inline uint8_t Engine::reduce(uint8_t const currdepth, uint8_t const maxdepth, uint8_t movesSearched) {
+    uint8_t newdepth = maxdepth;
+    #ifdef ENABLE_LMR
+    // Reduce late moves if we can
+    if (currdepth + 1 < maxdepth) {
+        if ((movesSearched > LATE_MOVE_CUTOFF)) {
+            if (currdepth < REDUCE1(maxdepth)) newdepth=REDUCE1(maxdepth);
+            else newdepth = maxdepth-1;
+            numReductions++;
+        } else if ((movesSearched > LATE_MOVE_CUTOFF_2)) {
+            if (currdepth < REDUCE2(maxdepth)) newdepth=REDUCE2(maxdepth);
+            else newdepth = maxdepth-1;
+            numReductions++;
+        }
+    }
+    #endif
+    return newdepth;
+}
+
+inline bool Engine::updatePvs(int32_t& alpha, BitBoard::Move* move,
+                              int32_t newEval, uint8_t const currdepth) {
+    bool raisedAlpha = false;
+
+    // Update pvs
+    uint8_t numPvsToUpdate = (currdepth == 0) ? numPvs : 1;
+    for (uint8_t pv = 0; pv < numPvsToUpdate; pv++) {
+        if (newEval > currPvs[pv][currdepth].eval) {
+            // Shift all pvs after this one down
+            for (uint8_t sft = numPvs-1; sft > pv; sft--) {
+                currPvs[sft][currdepth].eval = currPvs[sft-1][currdepth].eval;
+                memcpy(&currPvs[sft][currdepth].moves[currdepth], &currPvs[sft-1][currdepth].moves[currdepth], 
+                        sizeof(BitBoard::Move)*(MAX_DEPTH-currdepth-1));
+            }
+            currPvs[pv][currdepth].eval = newEval;
+            currPvs[pv][currdepth].moves[currdepth] = *move;
+            // Copy best pv from depth+1 to current depth's nth pv
+            memcpy(&currPvs[pv][currdepth].moves[currdepth+1], &currPvs[0][currdepth+1].moves[currdepth+1], 
+                    sizeof(BitBoard::Move)*(MAX_DEPTH-currdepth-2));
+            break;
+        }
+    }
+
+    if (currdepth == 0 && numPvs > 1) {
+        raisedAlpha = true;
+        // For MultiPV, we want a wider window from the root node so we don't beta-cutoff other PVs
+        alpha = currPvs[numPvs-1][0].eval;
+    } else {
+        if (newEval > alpha) {
+            alpha = newEval;
+            raisedAlpha = true;
+        }
+    }
+
+    return raisedAlpha;
 }
 
 int32_t Engine::recursiveDepthSearch(BitBoard& board,
@@ -206,10 +283,9 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
     BitBoard oldboard = board;
 
     bool inCheck = board.testInCheck(board.turn);
-    uint8_t newdepth = maxdepth;
-
     // Increase depth of search while still in check
-    if (inCheck) maxdepth++;
+    if (currdepth == maxdepth - 1) extendSearch(maxdepth, inCheck);
+    uint8_t newdepth = maxdepth;
 
 #ifdef ENABLE_NULL_MOVE
     if ((currdepth+3 < maxdepth) && !inCheck && board.moves < ENDGAME_CUTOFF) {
@@ -249,56 +325,47 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
         newdepth = maxdepth;
 
         board.movePiece(*move);
+        // We are in check after moving
         if (board.testInCheck(!board.turn)) {
             // Illegal move, continue
             board = oldboard;
             continue;
         }
 
+        // This move is a check if the move caused the opponent to be in check
+        bool isCheck = board.testInCheck(board.turn);
+
+        int32_t newEval = 0;
+
         #ifdef ENABLE_CONTEMPT
         // 3-fold repetition detection
-        if (currdepth > 1 && board.history.isRepeat(board.hash)) {
-            board = oldboard;
-            if (currdepth % 2) {
-                return DRAW_THRESHHOLD;
-            } else {
-                return -DRAW_THRESHHOLD;
-            }
-        }
-
-        board.history.insert(board.hash);
+        if (currdepth > 0 && board.history.isRepeat(board.hash)) {
+            if (currdepth % 2 == 0) newEval = -DRAW_THRESHHOLD;
+            else newEval = 0;
+        } else 
         #endif
+        {
+            board.history.insert(board.hash);
 
-        // We found a move letting us live next turn
-        foundLegalMove = true;
+            // We found a move letting us live next turn
+            foundLegalMove = true;
 
-        movesSearched++;
+            movesSearched++;
 
-        #ifdef ENABLE_LMR
-        // Reduce late moves if we can
-        if (currdepth + 1 < maxdepth && !inCheck) {
-            if ((movesSearched > LATE_MOVE_CUTOFF)) {
-                if (currdepth < REDUCE1(maxdepth)) newdepth=REDUCE1(maxdepth);
-                else newdepth = maxdepth-1;
-                numReductions++;
-                depthReduced = true;
-            } else if ((movesSearched > LATE_MOVE_CUTOFF_2)) {
-                if (currdepth < REDUCE2(maxdepth)) newdepth=REDUCE2(maxdepth);
-                else newdepth = maxdepth-1;
-                numReductions++;
-                depthReduced = true;
+            if (!inCheck && !move->moveData.isCapture && !isCheck) {
+                newdepth = reduce(currdepth, maxdepth, movesSearched);
+                depthReduced = newdepth != maxdepth;
             }
-        }
-        #endif
 
-        int32_t newEval = -recursiveDepthSearch(board, -beta, -alpha, newdepth, currdepth+1);
+            newEval = -recursiveDepthSearch(board, -beta, -alpha, newdepth, currdepth+1);
 
-        if (depthReduced) {
-            if (newEval > alpha || newEval >= beta) {
-                // Redo search at full depth
-                numRedos++;
-                newdepth = maxdepth;
-                newEval = -recursiveDepthSearch(board, -beta, -alpha, maxdepth, currdepth+1);
+            if (depthReduced) {
+                if (newEval > alpha) {
+                    // Redo search at full depth
+                    numRedos++;
+                    newdepth = maxdepth;
+                    newEval = -recursiveDepthSearch(board, -beta, -alpha, maxdepth, currdepth+1);
+                }
             }
         }
 
@@ -310,26 +377,18 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
             #ifdef ENABLE_TT
             board.tt->updateEntry(board, *move, beta, maxdepth-currdepth, TT::CUT);
             #endif
-            return newEval;
-        }
-
-        // Update pvs
-        uint8_t numPvsToUpdate = (currdepth == 0) ? numPvs : 1;
-        for (uint8_t pv = 0; pv < numPvsToUpdate; pv++) {
-            if (newEval > currPvs[pv][currdepth].eval) {
-                // Shift all pvs after this one down
-                for (uint8_t sft = numPvs-1; sft > pv; sft--) {
-                    currPvs[sft][currdepth].eval = currPvs[sft-1][currdepth].eval;
-                    memcpy(&currPvs[sft][currdepth].moves[currdepth], &currPvs[sft-1][currdepth].moves[currdepth], 
-                            sizeof(BitBoard::Move)*(MAX_DEPTH-currdepth-1));
+            #ifdef HISTORY_HEURISTIC
+            int32_t historyBonus = (maxdepth-currdepth)*(maxdepth-currdepth);
+            if (!move->moveData.isCapture) {
+                board.tt->updateHistoryScore(board.turn, *move, historyBonus);
+                for (auto m = moves.begin(); m != move; m++) {
+                    if (!m->moveData.isCapture) {
+                        board.tt->updateHistoryScore(board.turn, *move, -historyBonus/10);
+                    }
                 }
-                currPvs[pv][currdepth].eval = newEval;
-                currPvs[pv][currdepth].moves[currdepth] = *move;
-                // Copy best pv from depth+1 to current depth's nth pv
-                memcpy(&currPvs[pv][currdepth].moves[currdepth+1], &currPvs[0][currdepth+1].moves[currdepth+1], 
-                        sizeof(BitBoard::Move)*(MAX_DEPTH-currdepth-2));
-                break;
             }
+            #endif
+            return newEval;
         }
 
         if (newEval > bestEval) {
@@ -337,16 +396,7 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
             bestMove = *move;
         }
 
-        if (currdepth == 0 && numPvs > 1) {
-            raisedAlpha = true;
-            // For MultiPV, we want a wider window from the root node so we don't beta-cutoff other PVs
-            alpha = currPvs[numPvs-1][0].eval;
-        } else {
-            if (newEval > alpha) {
-                alpha = newEval;
-                raisedAlpha = true;
-            }
-        }
+        raisedAlpha |= updatePvs(alpha, move, newEval, currdepth);
     }
 
     if (!foundLegalMove && !inCheck) {

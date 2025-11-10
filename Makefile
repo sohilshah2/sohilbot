@@ -6,7 +6,7 @@ LDFLAGS = -pthread
 # Source files
 SRCS = sohilbot.cpp commandParser.cpp engine.cpp bitboard.cpp transpositionTables.cpp
 OBJS = $(SRCS:.cpp=.o)
-HEADERS = bitboard.hpp evaluate.hpp defines.hpp
+HEADERS = bitboard.hpp evaluate.hpp defines.hpp perftTests.hpp
 
 # Target executable
 TARGET = sohilbot

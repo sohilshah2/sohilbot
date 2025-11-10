@@ -93,7 +93,7 @@ class BitBoard {
         uint64_t hash;
         int32_t value;
         uint32_t moves;
-        bool turn;
+        BitBoardState::Color turn;
 
         TT* tt;
 

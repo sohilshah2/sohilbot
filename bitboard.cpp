@@ -264,7 +264,7 @@ void BitBoard::maskSetBitBoard(enum Piece piece, bool c, uint64_t m) {
 
 void BitBoard::changeTurn() {
     hash ^= TURN_HASH_WHITE;
-    turn ^= BLACK; // BLACK == 1
+    turn = static_cast<Color>(turn ^ BLACK); // BLACK == 1
 }
 
 void BitBoard::strToMove(std::string const& moveText, struct Move& move) {
@@ -849,25 +849,24 @@ bool BitBoard::testInCheck(bool c) const {
 int32_t BitBoard::evaluateKingSafety() const {
     int32_t numPos = 0;
     // King safety. Pretend king was a queen and see how far it can go. Penalize more available moves.
-    if (moves < ENDGAME_CUTOFF) {
-        numPos = 0;
-        uint64_t occupied = ~(s[turn].occupancy | s[!turn].occupancy);
+    numPos = 0;
+    uint64_t occupied = ~(s[turn].occupancy | s[!turn].occupancy);
 
-        auto slidingFuncs = {&shiftNorth, &shiftEast, &shiftSouth, &shiftWest, &shiftNoEast, &shiftNoWest, &shiftSoEast, &shiftSoWest};
-        for (auto func : slidingFuncs) {
-            uint64_t sft = p[turn].king;
-            while (sft) {
-                sft = func(sft);
-                sft &= occupied;
-                if (sft) numPos++;
-            }
+    auto slidingFuncs = {&shiftNorth, &shiftEast, &shiftSouth, &shiftWest, &shiftNoEast, &shiftNoWest, &shiftSoEast, &shiftSoWest};
+    for (auto func : slidingFuncs) {
+        uint64_t sft = p[turn].king;
+        while (sft) {
+            sft = func(sft);
+            sft &= occupied;
+            if (sft) numPos++;
         }
     }
+
     return numPos;
 }
 
 int32_t BitBoard::estimateMoveValue(Move const& move) const {
-    static constexpr int32_t CAPTURE_BONUS = 150;
+    static constexpr int32_t CAPTURE_BONUS = 75;
     static constexpr int32_t CASTLE_BONUS = 100;
 
     int32_t value = 0;
@@ -957,6 +956,9 @@ void BitBoard::sortMoves(std::array<Move,MAX_MOVES>& moves,
     for (uint8_t i = 0; i < numMoves; i++) {
         moves[i].value = estimateMoveValue(moves[i]);
         if (moves[i] == ttMove) moves[i].value += 10000;
+        #ifdef HISTORY_HEURISTIC
+        moves[i].value += tt->getHistoryScore(turn, moves[i]);
+        #endif
     }
     std::sort(moves.begin(), moves.begin() + numMoves,
             [&] (Move m1, Move m2) { return m1.value > m2.value; });

@@ -12,13 +12,13 @@
 namespace Evaluate {
     using namespace BitBoardState;
 
-    static int32_t constexpr MOBILITY_FACTOR = 6;
-    static int32_t constexpr SCOPE_FACTOR = 8;
-    static int32_t constexpr TEMPO_ADDER = 29;
-    static int32_t constexpr PST_FACTOR = 1;
-    static int32_t constexpr KING_SAFETY_FACTOR = 15;
-    static int32_t constexpr PASSED_PAWN_FACTOR = 1;
-    static int32_t constexpr CONNECTED_PAWN_FACTOR = 15;
+    static float constexpr MOBILITY_FACTOR = 4;
+    static float constexpr SCOPE_FACTOR = 1;
+    static float constexpr TEMPO_ADDER = 29;
+    static float constexpr PST_FACTOR = 1;
+    static float constexpr KING_SAFETY_FACTOR = 22;
+    static float constexpr PASSED_PAWN_FACTOR = 1;
+    static float constexpr CONNECTED_PAWN_FACTOR = 10;
 
     static inline int32_t evaluatePieceSquareTables(BitBoard const& board, float egBlend) {
         int32_t evaluation = 0;
@@ -117,15 +117,16 @@ namespace Evaluate {
                             - (static_cast<int32_t>(__builtin_popcountll(board.s[!board.turn].mobility)));
         
         float egBlend = board.calculateEndgameBlendFactor();
+        float mgBlend = 1-egBlend;
 
         evaluation += MOBILITY_FACTOR * mobility;
         evaluation += SCOPE_FACTOR * scope;
 
         evaluation += PST_FACTOR * evaluatePieceSquareTables(board, egBlend);
-        evaluation -= KING_SAFETY_FACTOR * board.evaluateKingSafety();
+        evaluation -= mgBlend * KING_SAFETY_FACTOR * board.evaluateKingSafety();
 
-        evaluation += egBlend * (PASSED_PAWN_FACTOR * evaluatePassedPawns(board));
-        evaluation += egBlend * (CONNECTED_PAWN_FACTOR * evaluateConnectedPawns(board));
+        //evaluation += egBlend * (PASSED_PAWN_FACTOR * evaluatePassedPawns(board));
+        //evaluation += egBlend * (CONNECTED_PAWN_FACTOR * evaluateConnectedPawns(board));
 
         return evaluation;
     }

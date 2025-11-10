@@ -14,6 +14,7 @@
 #define ENABLE_QUIESCE
 #define ENABLE_TT
 #define ENABLE_CONTEMPT
+//#define HISTORY_HEURISTIC
 
 // 1 hour in milliseconds
 #define INFINITE_TIMELIMIT 3600000
@@ -23,7 +24,7 @@
 
 #define MAX_PVS 5
 
-#define MAX_MOVES 128
+#define MAX_MOVES 226
 #define MAX_DEPTH 64
 #define DEFAULT_DEPTH 64
 
@@ -34,6 +35,10 @@
 
 #define ASPIRATION_START 35
 #define ASPIRATION_DELTA 25
+
+// For scoring moves for move ordering
+#define HISTORY_HEURISTIC_MAX_VALUE  (300)
+#define HISTORY_HEURISTIC_MIN_VALUE  (-300)
 
 #define ENDGAME_CUTOFF 60
 

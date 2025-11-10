@@ -19,6 +19,22 @@ TT::TT()
         }
     }
     clear();
+    clearHistory();
+}
+
+void TT::clearHistory() {
+    std::memset(&moveHistoryScore, 0, 64*64*2*sizeof(int32_t));
+}
+
+void TT::updateHistoryScore(BitBoardState::Color turn, BitBoard::Move const& move, int32_t score) {
+    // History gravity formula
+    score = std::min(HISTORY_HEURISTIC_MAX_VALUE, std::max(HISTORY_HEURISTIC_MIN_VALUE, score));
+    score -= moveHistoryScore[turn][move.from][move.to] * std::abs(score) / HISTORY_HEURISTIC_MAX_VALUE;
+    moveHistoryScore[turn][move.from][move.to] += score;
+}
+
+int32_t TT::getHistoryScore(BitBoardState::Color turn, BitBoard::Move const& move) {
+    return moveHistoryScore[turn][move.from][move.to];
 }
 
 TT::TTEntry& TT::lookupHash(uint64_t const hash) 

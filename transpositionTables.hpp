@@ -30,6 +30,9 @@ class TT {
         uint64_t genHash(BitBoard const& board) const;
         void clear();
         void printEstimatedOccupancy() const;
+        void clearHistory();
+        void updateHistoryScore(BitBoardState::Color turn, BitBoard::Move const& move, int32_t score);
+        int32_t getHistoryScore(BitBoardState::Color turn, BitBoard::Move const& move);
 
         // [turn][piece][square]
         uint64_t BOARDPOS_HASH[2][8][64];
@@ -40,6 +43,9 @@ class TT {
         };
 
         TTEntry table[TT_SIZE];
+
+        // [turn][from][to]
+        int32_t moveHistoryScore[2][64][64];
 };
 
 #endif
