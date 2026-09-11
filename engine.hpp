@@ -84,7 +84,11 @@ class Engine {
         uint32_t numTTEvictions=0;
         uint32_t numTTFills=0;
         uint32_t numNullReductions=0;
+        uint32_t numNullAttempts=0;
         uint32_t aspirationRetries=0;
+        uint32_t numSearches = 0;
+        uint32_t bestMoves[8];
+
         uint8_t depthIter=0;
         uint8_t seldepth=0;
         uint8_t quiesceDepth=0;
@@ -94,6 +98,7 @@ class Engine {
         std::atomic<bool> shouldStop;
         uint8_t numPvs=1;
         SohilBot* cmd;
+        float branchFactor;
 };
 
 #endif

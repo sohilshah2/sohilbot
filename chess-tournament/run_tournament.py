@@ -19,7 +19,12 @@ parser = argparse.ArgumentParser(
                 description='Automates tournament between UCI engines.')
 parser.add_argument('-t', '--threads', default=2)
 parser.add_argument('-g', '--games', default=100) 
-parser.add_argument('-m', '--movetime', default=100)
+
+parser.add_argument('-m1', '--movetime1', default=100)
+parser.add_argument('-d1', '--depth1', default=8)
+parser.add_argument('-m2', '--movetime2', default=100)
+parser.add_argument('-d2', '--depth2', default=8)
+
 parser.add_argument('-p', '--positions', default="positions")
 parser.add_argument('-f', '--force_engine1_white', action="store_true")
 parser.add_argument('engine1')
@@ -91,9 +96,9 @@ def runGame(p1, p2, pos, game):
     while (not board.is_game_over(claim_draw=True)) and (numMoves < MAX_MOVES):
         numMoves += 1
         if (board.turn == engine1_color):
-            result = p1.play(board, chess.engine.Limit(time=int(args.movetime)/1000.0))
+            result = p1.play(board, chess.engine.Limit(time=int(args.movetime1)/1000.0))
         else:
-            result = p2.play(board, chess.engine.Limit(time=int(args.movetime)/1000.0))
+            result = p2.play(board, chess.engine.Limit(time=int(args.movetime2)/1000.0))
         board.push(result.move)
         node = node.add_variation(result.move)
 
@@ -140,7 +145,7 @@ def runMatch(q, t, games):
 def main():
     global args
 
-    if (int(args.movetime) < 20):
+    if (int(args.movetime1) < 20 or int(args.movetime2) < 20):
         print("Error! Movetime must be >=20ms")
         exit(1)
     

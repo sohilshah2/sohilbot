@@ -3,26 +3,32 @@
 #include <string>
 #include <fstream>
 #include <ctime>
+#include <iomanip>
+#include <sstream>
 #include "sohilbot.hpp"
 #include "commandParser.hpp"
 
 SohilBot::SohilBot() {
-    // Open log file with timestamp in name
+#ifdef LOG_ON
+    // Open log file with timestamp in name (only when LOG_ON is defined)
     auto now = std::time(nullptr);
     auto tm = *std::localtime(&now);
     std::ostringstream oss;
     oss << std::put_time(&tm, "logs/sohilbot_debug_log%Y%m%d_%H%M%S.txt");
     SohilBot::logFile.open(oss.str());
-    
+
     if (!SohilBot::logFile.is_open()) {
         throw std::runtime_error("Failed to open log file: " + oss.str());
     }
+#endif
 
     parser = new CommandParser(this);
 }
 
 SohilBot::~SohilBot() {
+#ifdef LOG_ON
     SohilBot::logFile.close();
+#endif
     delete parser;
 }
 

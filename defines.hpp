@@ -3,17 +3,33 @@
 
 #include <cstdint>
 
+// Feature flags (defaults below). Override at compile time without editing:
+//   make EXTRA_FLAGS="-DDISABLE_TT -DENABLE_ASPIRATION"
+//   or: make ab-test DISABLE="TT" ENABLE="ASPIRATION"
+//
 //#define ASSERT_ON
-
 //#define SEARCH_STATS_ON
 //#define LOG_ON
 
-//#define ENABLE_ASPIRATION
+// Defaults ON — disable with -DDISABLE_<NAME>
+#ifndef DISABLE_NULL_MOVE
 #define ENABLE_NULL_MOVE
+#endif
+#ifndef DISABLE_LMR
 #define ENABLE_LMR
+#endif
+#ifndef DISABLE_QUIESCE
 #define ENABLE_QUIESCE
+#endif
+#ifndef DISABLE_TT
 #define ENABLE_TT
+#endif
+#ifndef DISABLE_CONTEMPT
 #define ENABLE_CONTEMPT
+#endif
+
+// Defaults OFF — enable with -DENABLE_<NAME> or -DHISTORY_HEURISTIC
+//#define ENABLE_ASPIRATION
 //#define HISTORY_HEURISTIC
 
 // 1 hour in milliseconds
@@ -28,17 +44,17 @@
 #define MAX_DEPTH 64
 #define DEFAULT_DEPTH 64
 
-#define LATE_MOVE_CUTOFF 2
+#define LATE_MOVE_CUTOFF 3
 #define LATE_MOVE_CUTOFF_2 4
 #define REDUCE1(x) (((x)*3)/4)
 #define REDUCE2(x) (((x)*2)/3)
 
-#define ASPIRATION_START 35
-#define ASPIRATION_DELTA 25
+#define ASPIRATION_START 45
+#define ASPIRATION_DELTA 20
 
 // For scoring moves for move ordering
-#define HISTORY_HEURISTIC_MAX_VALUE  (300)
-#define HISTORY_HEURISTIC_MIN_VALUE  (-300)
+#define HISTORY_HEURISTIC_MAX_VALUE  (500)
+#define HISTORY_HEURISTIC_MIN_VALUE  (-500)
 
 #define ENDGAME_CUTOFF 60
 

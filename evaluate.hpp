@@ -14,7 +14,7 @@ namespace Evaluate {
 
     static float constexpr MOBILITY_FACTOR = 4;
     static float constexpr SCOPE_FACTOR = 1;
-    static float constexpr TEMPO_ADDER = 29;
+    static float constexpr TEMPO_ADDER = 18;
     static float constexpr PST_FACTOR = 1;
     static float constexpr KING_SAFETY_FACTOR = 22;
     static float constexpr PASSED_PAWN_FACTOR = 1;

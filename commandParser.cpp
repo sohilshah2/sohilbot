@@ -396,7 +396,7 @@ int CommandParser::handleFENPosition(std::stringstream& ss) {
     uint8_t pos = 56; 
     for (char c : command) {
         if (c == '/') { pos -= 16; continue; }
-        else if (int8_t numEmpty = atoi(&c)) { pos += numEmpty; continue; }
+        else if (c >= '1' && c <= '8') { pos += static_cast<uint8_t>(c - '0'); continue; }
 
         if (c == 'r') board.p[1].rook |= 1ull << pos;
         else if (c == 'n') board.p[1].knight |= 1ull << pos;
@@ -433,6 +433,8 @@ int CommandParser::handleFENPosition(std::stringstream& ss) {
         uint8_t idx = (row<<3) | col;
         board.s[board.turn].enPassantSquare = idx;
     }
+
+    board.moves = 0;
 
     // halfmoves
     getline(ss, command, ' ');

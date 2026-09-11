@@ -30,7 +30,7 @@ class BitBoard {
 
             Move(uint8_t _from=0, uint8_t _to=0, const MoveData& _moveData=DEFAULT_MOVE, 
                  BitBoardState::Piece _promote=BitBoardState::EMPTY) 
-                : from(_from), to(_to), promote(_promote), moveData(_moveData) {};
+                : value(0), from(_from), to(_to), promote(_promote), moveData(_moveData) {};
             bool valid() const {
                 return from != to;
             }

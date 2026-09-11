@@ -1,0 +1,13 @@
+.DS_Store
+*.o
+sohilbot
+logs/
+.cursor/
+chess-tournament/sohilbot_baseline
+chess-tournament/sohilbot_test
+chess-tournament/sohilbot_all
+chess-tournament/stockfish*
+chess-tournament/ab_results/
+chess-tournament/logs/
+chess-tournament/*_games/
+chess-tournament/*.log

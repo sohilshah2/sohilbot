@@ -21,10 +21,15 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
     numTTEvictions=0;
     numTTFills=0;
     numNullReductions=0;
+    numNullAttempts=0;
     aspirationRetries=0;
+    numSearches = 0;
     timelimit = time;
     seldepth = 0;
     shouldStop = false;
+    branchFactor = 0;
+
+    uint32_t prevNodes = 0;
 
     depth = std::min(static_cast<int>(depth), MAX_DEPTH-1);
 
@@ -35,6 +40,7 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
 
     memset(&currPvs, 0, sizeof(Line)*MAX_DEPTH*MAX_PVS);
     memset(&pvs, 0, sizeof(Line)*MAX_PVS);
+    memset(&bestMoves, 0, sizeof(uint32_t)*8);
 
     board.tt->clearHistory();
 
@@ -46,13 +52,9 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
         }
     }
 
-    timeStart = std::chrono::high_resolution_clock::now();
+    timeStart = std::chrono::steady_clock::now();
     for (depthIter = iterStart; depthIter <= depth; depthIter++) {
         aspirationRetries = 1;
-        numReductions = 0;
-        numNullReductions = 0;
-        numRedos = 0;
-        branches = 0;
 
         quiesceDepth = std::min(depthIter * 2, MAX_DEPTH-1);
 
@@ -92,6 +94,15 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
 
         sendEngineInfo(depthIter);
 
+        // Update branch factor
+        uint8_t numLoops = depthIter - iterStart;
+        uint32_t currNodes = npos - prevNodes;
+        if (numLoops > 0) {
+            assert(prevNodes > 0);
+            float currBranchFactor = static_cast<float>(currNodes) / static_cast<float>(prevNodes);
+            branchFactor = (((numLoops-1) * branchFactor) + currBranchFactor) / (numLoops);
+        }
+        prevNodes = currNodes;
         if (abs(eval) > MATE(MAX_DEPTH)) break;
     }
 
@@ -101,15 +112,6 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
     board.tt->printEstimatedOccupancy();
     printSearchStats();
 #endif
-/*
-    std::cout << "History scores  |  Move scores" << std::endl;
-    std::array<BitBoard::Move,MAX_MOVES> moves;
-    uint8_t numMoves = board.getAvailableMoves(moves);
-    board.sortMoves(moves, numMoves, BitBoard::Move());
-    for (uint8_t i = 0; i < numMoves; i++) {
-        std::cout << BitBoard::moveToStr(moves[i]) << ": " << std::to_string(board.tt->getHistoryScore(board.turn, moves[i])) 
-                  << "  |  " << std::to_string(moves[i].value) << std::endl;
-    }*/
 
     move = pvs[0].moves[0];
     return pvs[0].eval;
@@ -123,16 +125,14 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
         seldepth = currdepth;
     }
 
-    // Null move test to see if current position already beats beta
     int32_t staticEval = Evaluate::evaluatePosition(board);
     #ifndef ENABLE_QUIESCE
     return staticEval;
     #endif
-    if (currdepth == quiesceDepth) return staticEval;
+    if (currdepth >= quiesceDepth) return staticEval;
     if (staticEval >= beta) return staticEval;
     if (staticEval > alpha) alpha = staticEval;
 
-    branches++;
     std::array<BitBoard::Move,MAX_MOVES> moves = {0};
     int32_t bestEval = staticEval;
 
@@ -143,7 +143,6 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
         BitBoard oldboard = board;
         board.movePiece(moves[i]);
 
-        // Illegal move check
         if (board.testInCheck(!board.turn)) {
             board = oldboard;
             continue;
@@ -161,7 +160,7 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
 }
 
 inline void Engine::extendSearch(uint8_t& depth, bool inCheck) const {
-    if (depth >= quiesceDepth) return;
+    if (depth >= quiesceDepth-1) return;
     if (depth < quiesceDepth-1 && inCheck) depth+=2;
 }
 
@@ -226,6 +225,7 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
                                      uint8_t maxdepth, uint8_t const currdepth)
 {
     using namespace BitBoardState;
+    npos++;
 
     if (shouldStop) {
         return NEG_INF;
@@ -245,7 +245,7 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
         ttMove = entry.move;
         if (entry.depth >= (maxdepth-currdepth)) {
             numTTHits++;
-            if (entry.node == TT::PV || (entry.node == TT::ALL && entry.eval < alpha)) {
+            if (entry.node == TT::PV || (entry.node == TT::ALL && entry.eval <= alpha)) {
                 currPvs[0][currdepth].eval = entry.eval;
                 currPvs[0][currdepth].moves[currdepth] = entry.move;
                 return entry.eval;
@@ -263,12 +263,15 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
 
     // Base case
     if (currdepth == maxdepth) {
-        const auto end = std::chrono::high_resolution_clock::now();
+        const auto end = std::chrono::steady_clock::now();
         const auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - timeStart);
         if (time.count() >= (timelimit)) {
             shouldStop = true;
         }
 
+        // Don't double count nodes in the quiesce function
+        npos--; 
+        
         int32_t eval = quiesce(board, alpha, beta, currdepth);
 
         // Leaf of search tree is PV node
@@ -277,8 +280,6 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
         return eval;
     }
 
-    npos++;
-    branches++;
     std::array<BitBoard::Move,MAX_MOVES> moves = {0};
     BitBoard oldboard = board;
 
@@ -288,29 +289,26 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
     uint8_t newdepth = maxdepth;
 
 #ifdef ENABLE_NULL_MOVE
-    if ((currdepth+3 < maxdepth) && !inCheck && board.moves < ENDGAME_CUTOFF) {
+    if (maxdepth > currdepth+3 && !inCheck && board.moves < ENDGAME_CUTOFF) {
         // Null move reduction: try a Null move and use it to reduce search depth
+        numNullAttempts++;
         board.changeTurn();
         board.s[board.turn].enPassantSquare = 0;
         board.s[!board.turn].enPassantSquare = 0;
-        newdepth = currdepth+3;
-        int32_t eval = -recursiveDepthSearch(board, -beta, -alpha, newdepth, currdepth+1);
+        newdepth = maxdepth-3;
+        int32_t eval = -recursiveDepthSearch(board, -beta, -beta + 1, newdepth, currdepth+1);
         board = oldboard;
         if (eval >= beta) {
             numNullReductions++;
-            if (currdepth < REDUCE1(maxdepth)) {
-                newdepth=REDUCE1(maxdepth);
-            } else {
-                // Doing nothing is already better for us than making a move, just return beta
-                board.tt->updateEntry(board, BitBoard::Move(), beta, maxdepth-currdepth, TT::CUT);
-                return beta;
-            }
+            // Doing nothing is already better for us than making a move, just return beta
+            board.tt->updateEntry(board, BitBoard::Move(), beta, maxdepth-currdepth, TT::CUT);
+            return beta;
         }
     }
 #endif
 
     bool foundLegalMove = false;
-    bool raisedAlpha = false;
+    [[maybe_unused]] bool raisedAlpha = false;
     int32_t bestEval = NEG_INF;
     BitBoard::Move bestMove = BitBoard::Move();
 
@@ -319,6 +317,7 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
     board.sortMoves(moves, numMoves, ttMove);
 
     uint8_t movesSearched = 0;
+    numSearches++;
     for (auto move = moves.begin(); move != moves.begin() + numMoves; move++) {
         bool depthReduced = false;
 
@@ -332,27 +331,26 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
             continue;
         }
 
-        // This move is a check if the move caused the opponent to be in check
-        bool isCheck = board.testInCheck(board.turn);
-
         int32_t newEval = 0;
 
-        #ifdef ENABLE_CONTEMPT
         // 3-fold repetition detection
         if (currdepth > 0 && board.history.isRepeat(board.hash)) {
-            if (currdepth % 2 == 0) newEval = -DRAW_THRESHHOLD;
+            if (currdepth % 2 == 0) 
+                #ifdef ENABLE_CONTEMPT
+                newEval = -DRAW_THRESHHOLD;
+                #else
+                newEval = 0;
+                #endif
             else newEval = 0;
-        } else 
-        #endif
-        {
+        } else {
             board.history.insert(board.hash);
 
             // We found a move letting us live next turn
             foundLegalMove = true;
 
             movesSearched++;
-
-            if (!inCheck && !move->moveData.isCapture && !isCheck) {
+            branches++;
+            if (!inCheck && !move->moveData.isCapture && !board.testInCheck(board.turn)) {
                 newdepth = reduce(currdepth, maxdepth, movesSearched);
                 depthReduced = newdepth != maxdepth;
             }
@@ -378,16 +376,17 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
             board.tt->updateEntry(board, *move, beta, maxdepth-currdepth, TT::CUT);
             #endif
             #ifdef HISTORY_HEURISTIC
-            int32_t historyBonus = (maxdepth-currdepth)*(maxdepth-currdepth);
             if (!move->moveData.isCapture) {
+                int32_t historyBonus = (maxdepth-currdepth)*(maxdepth-currdepth);
                 board.tt->updateHistoryScore(board.turn, *move, historyBonus);
                 for (auto m = moves.begin(); m != move; m++) {
                     if (!m->moveData.isCapture) {
-                        board.tt->updateHistoryScore(board.turn, *move, -historyBonus/10);
+                        board.tt->updateHistoryScore(board.turn, *m, -historyBonus/5);
                     }
                 }
             }
             #endif
+            bestMoves[std::min(7u, static_cast<uint>(movesSearched-1))]++;
             return newEval;
         }
 
@@ -410,6 +409,9 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
     #ifdef ENABLE_TT
     board.tt->updateEntry(board, bestMove, bestEval, maxdepth-currdepth, raisedAlpha ? TT::PV : TT::ALL);
     #endif
+    
+    bestMoves[std::min(7u, static_cast<uint>(movesSearched-1))]++;
+
     return bestEval;
 }
 
@@ -438,9 +440,10 @@ uint64_t Engine::perft(PerftResult& result, BitBoard& board, uint8_t depth, bool
             if (depth == 1 && move->moveData.isCastle) result.castles++;
             if (depth == 1 && move->moveData.isEnPassant) result.enpassants++;
 
-            nodes += perft(result, board, depth-1, false);
+            uint64_t childNodes = perft(result, board, depth-1, false);
+            nodes += childNodes;
             if (divide) {
-                std::cout << BitBoard::moveToStr(*move) << ": " << std::to_string(nodes) << std::endl;
+                std::cout << BitBoard::moveToStr(*move) << ": " << std::to_string(childNodes) << std::endl;
             }
         }
         board = oldboard;
@@ -454,7 +457,7 @@ uint64_t Engine::perft(PerftResult& result, BitBoard& board, uint8_t depth, bool
 }
 
 void Engine::sendEngineInfo(uint8_t depth) {
-    const auto end = std::chrono::high_resolution_clock::now();
+    const auto end = std::chrono::steady_clock::now();
     const auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - timeStart);
     uint32_t evalRate = (time.count() == 0) ? 0 : (uint32_t)(npos / ((float)time.count()/1000));
 
@@ -487,15 +490,23 @@ void Engine::sendEngineInfo(uint8_t depth) {
 }
 
 void Engine::printSearchStats() const {
-    float branchFactor = std::log2((float)branches)/ std::log2(depthIter-1);
-
     std::cout << "Searched total number of nodes: " << std::to_string(npos) << std::endl;
     std::cout << "Branch Factor: " << std::to_string(branchFactor) << std::endl;
+    
     std::cout << "Aspiration retries: " << std::to_string(aspirationRetries-1) << std::endl;
+    
+    std::cout << "LMR Reduction rate: " << std::to_string((float)numReductions*100/branches) << "%" << std::endl;
     std::cout << "LMR Redo rate: " << std::to_string((float)numRedos*100/numReductions) << "%" << std::endl;
+    std::cout << "NULL reduction rate: " << std::to_string((float)numNullReductions*100/numNullAttempts) << "%" << std::endl;
+
     std::cout << "TT Hitrate: " << std::to_string((float)numTTHits*100/numTTLookups) << "%" << std::endl;
     std::cout << "TT Evictionrate: " << std::to_string((float)numTTEvictions*100/numTTLookups) << "%" << std::endl;
     std::cout << "TT Depth miss: " << std::to_string((float)numTTSoftmiss*100/numTTLookups) << "%" << std::endl;
     std::cout << "TT Entries filled: " << std::to_string(numTTFills) << std::endl;
-    std::cout << "NULL reduction rate: " << std::to_string((float)numNullReductions*100/branches) << "%" << std::endl;
+
+    std::cout << "Move order hitrate: [";
+    for (uint i = 0; i < 8; i++) {
+        std::cout << std::to_string(i) << " (" << std::to_string((float)bestMoves[i]*100/numSearches) << "%)  ";
+    }
+    std::cout << "]" << std::endl;
 }

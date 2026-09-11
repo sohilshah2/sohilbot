@@ -954,10 +954,12 @@ void BitBoard::sortMoves(std::array<Move,MAX_MOVES>& moves,
                                 uint8_t numMoves, Move const& ttMove) const 
 {
     for (uint8_t i = 0; i < numMoves; i++) {
-        moves[i].value = estimateMoveValue(moves[i]);
         if (moves[i] == ttMove) moves[i].value += 10000;
+        else moves[i].value = estimateMoveValue(moves[i]);
         #ifdef HISTORY_HEURISTIC
-        moves[i].value += tt->getHistoryScore(turn, moves[i]);
+        if (!moves[i].moveData.isCapture) {
+            moves[i].value += tt->getHistoryScore(turn, moves[i]);
+        }
         #endif
     }
     std::sort(moves.begin(), moves.begin() + numMoves,
