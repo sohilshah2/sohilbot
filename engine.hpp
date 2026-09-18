@@ -58,7 +58,8 @@ class Engine {
 
         int32_t recursiveDepthSearch(BitBoard& board,
                                      int32_t alpha, int32_t beta, 
-                                     uint8_t maxdepth, uint8_t const currdepth);
+                                     uint8_t maxdepth, uint8_t const currdepth,
+                                     bool onPV);
         int32_t searchPv(BitBoard& board,
                          int32_t alpha, int32_t const beta, 
                          uint8_t const maxdepth, uint8_t const currdepth);
@@ -70,9 +71,11 @@ class Engine {
         uint8_t reduce(uint8_t const currdepth, uint8_t const maxdepth, uint8_t movesSearched);
         bool updatePvs(int32_t& alpha, BitBoard::Move* move,
                        int32_t newEval, uint8_t const currdepth);
+        void storeKiller(uint8_t ply, BitBoard::Move const& move);
 
         struct Line currPvs[MAX_PVS][MAX_DEPTH];
         struct Line pvs[MAX_PVS];
+        BitBoard::Move killers[MAX_DEPTH][2];
 
         uint64_t npos;
         uint64_t branches;

@@ -27,6 +27,9 @@
 #ifndef DISABLE_CONTEMPT
 #define ENABLE_CONTEMPT
 #endif
+#ifndef DISABLE_KILLERS
+#define ENABLE_KILLERS
+#endif
 
 // Defaults OFF — enable with -DENABLE_<NAME> or -DHISTORY_HEURISTIC
 //#define ENABLE_ASPIRATION
@@ -44,17 +47,35 @@
 #define MAX_DEPTH 64
 #define DEFAULT_DEPTH 64
 
-#define LATE_MOVE_CUTOFF 3
-#define LATE_MOVE_CUTOFF_2 4
-#define REDUCE1(x) (((x)*3)/4)
-#define REDUCE2(x) (((x)*2)/3)
+// LMR: first LMR_MIN_MOVES legal moves are full depth; later quiets reduce by R plies.
+// remaining must stay > R so the child still hits a defined leaf (currdepth >= maxdepth).
+#ifndef LMR_MIN_MOVES
+#define LMR_MIN_MOVES 3
+#endif
+#ifndef LMR_AGGRESSIVE_MOVES
+#define LMR_AGGRESSIVE_MOVES 5
+#endif
+#ifndef LMR_R1
+#define LMR_R1 1
+#endif
+#ifndef LMR_R2
+#define LMR_R2 2
+#endif
+
+// Quiescence: search captures this many plies past the ID horizon (not 2x depth).
+#ifndef QS_EXTRA_PLIES
+#define QS_EXTRA_PLIES 4
+#endif
 
 #define ASPIRATION_START 45
 #define ASPIRATION_DELTA 20
 
-// For scoring moves for move ordering
-#define HISTORY_HEURISTIC_MAX_VALUE  (500)
-#define HISTORY_HEURISTIC_MIN_VALUE  (-500)
+// History must stay below typical capture scores so quiets cannot leapfrog MVV.
+#define HISTORY_HEURISTIC_MAX_VALUE  (80)
+#define HISTORY_HEURISTIC_MIN_VALUE  (-80)
+#define CAPTURE_ORDER_BONUS 400
+#define KILLER1_BONUS 250
+#define KILLER2_BONUS 200
 
 #define ENDGAME_CUTOFF 60
 

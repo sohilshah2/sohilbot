@@ -57,26 +57,25 @@ class BitBoard {
             bool castleLong;
         } s[2];
 
+        // Game + search path hashes. Keys live in a process-wide buffer so
+        // copy-make only copies `len` (undo restores it). Single-threaded UCI.
         class History {
             public:
-                History() : h(), idx(0) { }
-                bool isRepeat(uint64_t hash) {
-                    for (uint8_t i = 0; i < 4; i++) {
-                        if (hash == h[i]) {
-                            return true;
-                        }
+                static constexpr uint16_t CAP = 512;
+                History() : len(0) { }
+                bool isRepeat(uint64_t hash) const {
+                    for (uint16_t i = 0; i < len; i++) {
+                        if (hash == h[i]) return true;
                     }
                     return false;
                 }
 
                 void insert(uint64_t hash) {
-                    h[idx] = hash;
-                    idx++;
-                    idx &= 0x3;
+                    if (len < CAP) h[len++] = hash;
                 }
             private:
-                uint64_t h[4];
-                uint8_t idx;
+                static uint64_t h[CAP];
+                uint16_t len;
         } history;
 
         static const MoveData DEFAULT_MOVE;
@@ -111,7 +110,8 @@ class BitBoard {
         static void strToMove(std::string const& moveText, struct Move& move);
         static std::string moveToStr(struct Move const& move);
         void movePiece(struct Move const& move);
-        void sortMoves(std::array<Move,MAX_MOVES>& moves, uint8_t numMoves, struct Move const& ttMove) const;
+        void sortMoves(std::array<Move,MAX_MOVES>& moves, uint8_t numMoves, struct Move const& ttMove,
+                       struct Move const& killer1 = Move(), struct Move const& killer2 = Move()) const;
         uint8_t getAvailableMoves(std::array<Move,MAX_MOVES>& movesAvailable, bool capturesOnly=false) const;
         bool testInCheck(bool c) const;
         int32_t estimateMoveValue(struct Move const& move) const;

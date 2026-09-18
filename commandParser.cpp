@@ -122,6 +122,8 @@ void CommandParser::handleIsReady() {
  * @brief Handles the "ucinewgame" command
  */
 void CommandParser::handleNewGame() {
+    tt->clear();
+    tt->clearHistory();
     board = BitBoard(tt, true);
 }
 
@@ -443,6 +445,7 @@ int CommandParser::handleFENPosition(std::stringstream& ss) {
     getline(ss, command, ' ');
 
     board.hash = tt->genHash(board);
+    board.history.insert(board.hash);
 
     getline(ss, command, ' ');
     if (command == "moves") {
@@ -479,6 +482,7 @@ void CommandParser::handleMultiPVOption(std::stringstream& ss) {
  */
 void CommandParser::handleStartPosition(std::stringstream& ss) {
     board = BitBoard(tt, true);
+    board.history.insert(board.hash);
     std::string command;
     getline(ss, command, ' ');
     if (command == "moves") {

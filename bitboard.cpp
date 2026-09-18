@@ -10,6 +10,7 @@ const BitBoard::MoveData BitBoard::EN_PASSANT_MOVE = {.isCapture=true, .isCastle
 const BitBoard::MoveData BitBoard::CASTLE_MOVE = {.isCapture=false, .isCastle=true, .isEnPassant=false, .isPromotion=false};
 const BitBoard::MoveData BitBoard::PROMOTION_MOVE = {.isCapture=false, .isCastle=false, .isEnPassant=false, .isPromotion=true};
 const BitBoard::MoveData BitBoard::PROMOTE_CAPTURE = {.isCapture=true, .isCastle=false, .isEnPassant=false, .isPromotion=true};
+uint64_t BitBoard::History::h[BitBoard::History::CAP] = {};
 
 inline uint64_t shiftNorth(uint64_t const b) { return b << 8; }
 inline uint64_t shiftSouth(uint64_t const b) { return b >> 8; }
@@ -23,11 +24,6 @@ inline uint64_t shiftNoWest(uint64_t const b) {return (b << 7) & notHFile;}
 
 BitBoard::BitBoard(TT* _tt, bool startpos) {
     tt = _tt;
-
-    if (tt) {
-        tt->clear();
-    }
-
     moves = 0;
     if (startpos) {
         p[0] = {.pawn=0xff00,.knight=0x42,.bishop=0x24,.rook=0x81,.queen=0x8,.king=0x10};
@@ -170,22 +166,23 @@ void BitBoard::recalculateThreats() {
 int32_t BitBoard::getPieceValue(Piece const& piece) const
 {
     int32_t value;
-    bool isEndgame = moves > ENDGAME_CUTOFF;
+    float const egBlend = calculateEndgameBlendFactor();
+    float const mgBlend = 1.0f - egBlend;
     switch(piece) {
         case PAWN:
-            value = isEndgame ? PAWN_VALUE_EG : PAWN_VALUE_MG;
+            value = static_cast<int32_t>(mgBlend * PAWN_VALUE_MG + egBlend * PAWN_VALUE_EG);
             break;
         case KNIGHT:
-            value = isEndgame ? KNIGHT_VALUE_EG : KNIGHT_VALUE_MG;
+            value = static_cast<int32_t>(mgBlend * KNIGHT_VALUE_MG + egBlend * KNIGHT_VALUE_EG);
             break;
         case BISHOP:
-            value = isEndgame ? BISHOP_VALUE_EG : BISHOP_VALUE_MG;
+            value = static_cast<int32_t>(mgBlend * BISHOP_VALUE_MG + egBlend * BISHOP_VALUE_EG);
             break;
         case ROOK:
-            value = isEndgame ? ROOK_VALUE_EG : ROOK_VALUE_MG;
+            value = static_cast<int32_t>(mgBlend * ROOK_VALUE_MG + egBlend * ROOK_VALUE_EG);
             break;
         case QUEEN:
-            value = isEndgame ? QUEEN_VALUE_EG : QUEEN_VALUE_MG;
+            value = static_cast<int32_t>(mgBlend * QUEEN_VALUE_MG + egBlend * QUEEN_VALUE_EG);
             break;
         case KING:
             value = KING_STRENGTH_VALUE;
@@ -755,12 +752,14 @@ uint32_t BitBoard::getKingMoves(std::array<Move,MAX_MOVES>::iterator& moves, boo
             sftBoard = shiftWest(sftBoard);
             sftBoard &= friendly & enemy;
             if (sftBoard) maskIfPositionAttacked(sftBoard, turn);
-            newpos = __builtin_ctzll(sftBoard);
-            sftBoard = shiftWest(sftBoard);
-            sftBoard &= friendly & enemy;
             if (sftBoard) {
-                *(moves++) = Move(pos, newpos, CASTLE_MOVE);
-                numMoves++;
+                newpos = __builtin_ctzll(sftBoard);
+                sftBoard = shiftWest(sftBoard);
+                sftBoard &= friendly & enemy;
+                if (sftBoard) {
+                    *(moves++) = Move(pos, newpos, CASTLE_MOVE);
+                    numMoves++;
+                }
             }
         }
     }
@@ -951,16 +950,21 @@ float BitBoard::calculateEndgameBlendFactor() const {
 }
 
 void BitBoard::sortMoves(std::array<Move,MAX_MOVES>& moves,
-                                uint8_t numMoves, Move const& ttMove) const 
+                                uint8_t numMoves, Move const& ttMove,
+                                Move const& killer1, Move const& killer2) const 
 {
     for (uint8_t i = 0; i < numMoves; i++) {
+        moves[i].value = estimateMoveValue(moves[i]);
         if (moves[i] == ttMove) moves[i].value += 10000;
-        else moves[i].value = estimateMoveValue(moves[i]);
-        #ifdef HISTORY_HEURISTIC
-        if (!moves[i].moveData.isCapture) {
+        if (moves[i].moveData.isCapture) {
+            moves[i].value += CAPTURE_ORDER_BONUS;
+        } else {
+            if (moves[i] == killer1) moves[i].value += KILLER1_BONUS;
+            else if (moves[i] == killer2) moves[i].value += KILLER2_BONUS;
+            #ifdef HISTORY_HEURISTIC
             moves[i].value += tt->getHistoryScore(turn, moves[i]);
+            #endif
         }
-        #endif
     }
     std::sort(moves.begin(), moves.begin() + numMoves,
             [&] (Move m1, Move m2) { return m1.value > m2.value; });

@@ -63,6 +63,10 @@ void TT::updateEntry(BitBoard const& board, BitBoard::Move const& move,
                      int32_t const eval, uint8_t const depth, NodeType const node)
 {
     TTEntry& entry = lookupHash(board.hash);
+    if (entry.hash == board.hash) {
+        if (entry.depth > depth) return;
+        if (!move.valid() && entry.move.valid()) return;
+    }
     entry.eval = eval;
     entry.depth = depth;
     entry.hash = board.hash;

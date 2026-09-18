@@ -27,10 +27,40 @@ parser.add_argument('-d2', '--depth2', default=8)
 
 parser.add_argument('-p', '--positions', default="positions")
 parser.add_argument('-f', '--force_engine1_white', action="store_true")
+parser.add_argument('--uci1', default='',
+                    help='Comma-separated UCI options for engine1, e.g. Threads=1')
+parser.add_argument('--uci2', default='',
+                    help='Comma-separated UCI options for engine2, e.g. UCI_LimitStrength=true,UCI_Elo=2300')
 parser.add_argument('engine1')
 parser.add_argument('engine2')
 
 args = parser.parse_args()
+
+def parse_uci_options(spec):
+    opts = {}
+    if not spec:
+        return opts
+    for item in spec.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        name, value = item.split('=', 1)
+        name = name.strip()
+        value = value.strip()
+        low = value.lower()
+        if low in ('true', 'false'):
+            opts[name] = (low == 'true')
+        else:
+            try:
+                opts[name] = int(value)
+            except ValueError:
+                opts[name] = value
+    return opts
+
+def apply_uci_options(engine, spec):
+    opts = parse_uci_options(spec)
+    if opts:
+        engine.configure(opts)
 
 def phiInv(p):
     return math.sqrt(2) * scipy.special.erfinv(2*p-1)
@@ -130,6 +160,8 @@ def runMatch(q, t, games):
 
     p1 = chess.engine.SimpleEngine.popen_uci("./"+args.engine1)
     p2 = chess.engine.SimpleEngine.popen_uci("./"+args.engine2)
+    apply_uci_options(p1, args.uci1)
+    apply_uci_options(p2, args.uci2)
 
     for game in range(games):
         rand = random.randint(0, len(positions)-1)
