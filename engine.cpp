@@ -22,14 +22,19 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
     numTTFills=0;
     numNullReductions=0;
     numNullAttempts=0;
-    aspirationRetries=0;
+    numAspirationRetries=0;
+    numPvsScouts=0;
+    numPvsResearches=0;
+    numQsDeltaPrunes=0;
+    numQsSeePrunes=0;
     numSearches = 0;
     timelimit = time;
     seldepth = 0;
     shouldStop = false;
     branchFactor = 0;
 
-    uint32_t prevNodes = 0;
+    uint64_t prevCumulativeNodes = 0;
+    uint64_t prevIterationNodes = 0;
 
     depth = std::min(static_cast<int>(depth), MAX_DEPTH-1);
 
@@ -55,7 +60,7 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
 
     timeStart = std::chrono::steady_clock::now();
     for (depthIter = iterStart; depthIter <= depth; depthIter++) {
-        aspirationRetries = 1;
+        [[maybe_unused]] uint32_t aspirationAttempts = 0;
 
         quiesceDepth = std::min(depthIter + QS_EXTRA_PLIES, MAX_DEPTH-1);
 
@@ -64,17 +69,21 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
 #endif
         do {
             #ifdef ENABLE_ASPIRATION
-            if (aspirationRetries > 2) {
+            if (aspirationAttempts >= 2) {
                 // If we tried 2 times, search full window
                 alpha = NEG_INF;
                 beta = INF;
-            } else {
-                if (eval >= beta) beta += ASPIRATION_DELTA * aspirationRetries;
-                if (eval <= alpha) alpha -= ASPIRATION_DELTA * aspirationRetries;
+            } else if (aspirationAttempts > 0) {
+                const int32_t expansion = ASPIRATION_DELTA * (aspirationAttempts + 1);
+                if (eval >= beta) beta += expansion;
+                if (eval <= alpha) alpha -= expansion;
             }
             #endif
             eval = recursiveDepthSearch(board, alpha, beta, depthIter, 0, true);
-            aspirationRetries++;
+            aspirationAttempts++;
+            if (!shouldStop && (eval > beta || eval < alpha)) {
+                numAspirationRetries++;
+            }
         } while (!shouldStop && (eval > beta || eval < alpha));
 
         #ifdef ENABLE_ASPIRATION
@@ -97,14 +106,16 @@ int32_t Engine::searchBestMove(BitBoard& board, BitBoard::Move& move,
         sendEngineInfo(depthIter);
 
         // Update branch factor
-        uint8_t numLoops = depthIter - iterStart;
-        uint32_t currNodes = npos - prevNodes;
-        if (numLoops > 0) {
-            assert(prevNodes > 0);
-            float currBranchFactor = static_cast<float>(currNodes) / static_cast<float>(prevNodes);
+        const uint8_t numLoops = depthIter - iterStart;
+        const uint64_t cumulativeNodes = npos;
+        const uint64_t currIterationNodes = cumulativeNodes - prevCumulativeNodes;
+        if (numLoops > 0 && prevIterationNodes > 0) {
+            float currBranchFactor = static_cast<float>(currIterationNodes)
+                                   / static_cast<float>(prevIterationNodes);
             branchFactor = (((numLoops-1) * branchFactor) + currBranchFactor) / (numLoops);
         }
-        prevNodes = currNodes;
+        prevCumulativeNodes = cumulativeNodes;
+        prevIterationNodes = currIterationNodes;
         // Only stop ID once we have searched at least as many plies as the
         // mate distance. A TT mate at depth 1 must not abort the iteration
         // that would actually play the mating line.
@@ -144,22 +155,73 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
     if (currdepth > seldepth) {
         seldepth = currdepth;
     }
+    if (shouldStop) {
+        return 0;
+    }
 
     int32_t staticEval = Evaluate::evaluatePosition(board);
     #ifndef ENABLE_QUIESCE
     return staticEval;
     #endif
+
+    const bool inCheck = board.testInCheck(board.turn);
+
+#ifdef ENABLE_QS_CHECK
+    if (!inCheck && currdepth >= quiesceDepth) return staticEval;
+    if (currdepth >= MAX_DEPTH - 1) return staticEval;
+#else
     if (currdepth >= quiesceDepth) return staticEval;
-    if (staticEval >= beta) return staticEval;
-    if (staticEval > alpha) alpha = staticEval;
+#endif
+
+    int32_t bestEval;
+#ifdef ENABLE_QS_CHECK
+    if (inCheck) {
+        bestEval = NEG_INF;
+    } else
+#endif
+    {
+        if (staticEval >= beta) return staticEval;
+        if (staticEval > alpha) alpha = staticEval;
+        bestEval = staticEval;
+    }
 
     std::array<BitBoard::Move,MAX_MOVES> moves = {0};
-    int32_t bestEval = staticEval;
+#ifdef ENABLE_QS_CHECK
+    const bool capturesOnly = !inCheck;
+#else
+    const bool capturesOnly = true;
+#endif
+    uint8_t numMoves = board.getAvailableMoves(moves, capturesOnly);
+    board.sortMoves(moves, numMoves, BitBoard::Move());
 
-    uint8_t numCaptures = board.getAvailableMoves(moves, true /* capturesOnly */);
-    board.sortMoves(moves, numCaptures, BitBoard::Move());
+    bool foundLegalMove = false;
+    for (uint8_t i = 0; i < numMoves; i++) {
+        if (!inCheck) {
+#if defined(ENABLE_QS_DELTA) || defined(ENABLE_QS_SEE)
+            const Piece victim = moves[i].moveData.isEnPassant
+                ? PAWN
+                : board.getPiece(board.p[!board.turn], moves[i].to);
+#endif
+#ifdef ENABLE_QS_DELTA
+            if (!moves[i].moveData.isPromotion
+                && staticEval + SEE_VALUE[victim] + QS_DELTA_MARGIN < alpha) {
+                numQsDeltaPrunes++;
+                continue;
+            }
+#endif
+#ifdef ENABLE_QS_SEE
+            if (moves[i].moveData.isCapture) {
+                Piece attacker = board.getPiece(board.p[board.turn], moves[i].from);
+                if (moves[i].moveData.isPromotion) attacker = moves[i].promote;
+                // Equal/winning MVV cannot have negative SEE.
+                if (SEE_VALUE[victim] < SEE_VALUE[attacker] && board.see(moves[i]) < 0) {
+                    numQsSeePrunes++;
+                    continue;
+                }
+            }
+#endif
+        }
 
-    for (uint8_t i = 0; i < numCaptures; i++) {
         BitBoard oldboard = board;
         board.movePiece(moves[i]);
 
@@ -167,6 +229,7 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
             board = oldboard;
             continue;
         }
+        foundLegalMove = true;
 
         int32_t eval = -quiesce(board, -beta, -alpha, currdepth+1);
         board = oldboard;
@@ -176,6 +239,13 @@ int32_t Engine::quiesce(BitBoard& board, int32_t alpha, int32_t const beta, uint
         if (eval > bestEval) bestEval = eval;
     }
 
+#ifdef ENABLE_QS_CHECK
+    if (inCheck && !foundLegalMove) {
+        return -MATE(currdepth+1);
+    }
+#else
+    (void)foundLegalMove;
+#endif
     return bestEval;
 }
 
@@ -414,14 +484,45 @@ int32_t Engine::recursiveDepthSearch(BitBoard& board,
             }
 
             const bool childOnPV = onPV && (*move == pvs[0].moves[currdepth]);
-            newEval = -recursiveDepthSearch(board, -beta, -alpha, newdepth, currdepth+1, childOnPV);
+            #ifdef ENABLE_PVS
+            const bool useScout = numPvs == 1 && movesSearched > 1;
+            #else
+            const bool useScout = false;
+            #endif
 
-            if (depthReduced && !shouldStop) {
-                if (newEval > alpha) {
+            if (useScout) {
+                // A later move only needs to prove that it can beat alpha.
+                // Re-search a fail-high inside the full window to recover its
+                // exact score and principal variation.
+                numPvsScouts++;
+                newEval = -recursiveDepthSearch(board, -alpha-1, -alpha,
+                                                newdepth, currdepth+1, false);
+
+                if (depthReduced && !shouldStop && newEval > alpha) {
+                    // Confirm an LMR fail-high at full depth, still with the
+                    // cheap scout window.
+                    numRedos++;
+                    newdepth = maxdepth;
+                    numPvsScouts++;
+                    newEval = -recursiveDepthSearch(board, -alpha-1, -alpha,
+                                                    newdepth, currdepth+1, false);
+                }
+
+                if (!shouldStop && newEval > alpha && newEval < beta) {
+                    numPvsResearches++;
+                    newEval = -recursiveDepthSearch(board, -beta, -alpha,
+                                                    newdepth, currdepth+1, childOnPV);
+                }
+            } else {
+                newEval = -recursiveDepthSearch(board, -beta, -alpha,
+                                                newdepth, currdepth+1, childOnPV);
+
+                if (depthReduced && !shouldStop && newEval > alpha) {
                     // Redo search at full depth
                     numRedos++;
                     newdepth = maxdepth;
-                    newEval = -recursiveDepthSearch(board, -beta, -alpha, maxdepth, currdepth+1, childOnPV);
+                    newEval = -recursiveDepthSearch(board, -beta, -alpha,
+                                                    newdepth, currdepth+1, childOnPV);
                 }
             }
         }
@@ -561,7 +662,15 @@ void Engine::printSearchStats() const {
     std::cout << "Searched total number of nodes: " << std::to_string(npos) << std::endl;
     std::cout << "Branch Factor: " << std::to_string(branchFactor) << std::endl;
     
-    std::cout << "Aspiration retries: " << std::to_string(aspirationRetries-1) << std::endl;
+    std::cout << "Aspiration retries: " << std::to_string(numAspirationRetries) << std::endl;
+    std::cout << "PVS scouts: " << std::to_string(numPvsScouts) << std::endl;
+    std::cout << "PVS re-searches: " << std::to_string(numPvsResearches)
+              << " (" << std::to_string(numPvsScouts
+                                        ? static_cast<float>(numPvsResearches)*100/numPvsScouts
+                                        : 0.0f)
+              << "%)" << std::endl;
+    std::cout << "QS delta prunes: " << std::to_string(numQsDeltaPrunes) << std::endl;
+    std::cout << "QS SEE prunes: " << std::to_string(numQsSeePrunes) << std::endl;
     
     std::cout << "LMR Reduction rate: " << std::to_string((float)numReductions*100/branches) << "%" << std::endl;
     std::cout << "LMR Redo rate: " << std::to_string((float)numRedos*100/numReductions) << "%" << std::endl;

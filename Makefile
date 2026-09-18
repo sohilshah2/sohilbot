@@ -56,6 +56,8 @@ promote-baseline: $(TARGET)
 #   make ab-test DISABLE=TT
 #   make ab-test DISABLE="TT LMR" GAMES=200 MOVETIME=50
 #   make ab-test ENABLE=ASPIRATION
+#   make ab-test DISABLE="QS_SEE QS_DELTA QS_CHECK"
+#   make ab-test DISABLE=PVS
 ab-test:
 	$(MAKE) clean
 	$(MAKE) EXTRA_FLAGS="$(AB_FLAGS)"

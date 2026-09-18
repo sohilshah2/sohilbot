@@ -88,7 +88,11 @@ class Engine {
         uint32_t numTTFills=0;
         uint32_t numNullReductions=0;
         uint32_t numNullAttempts=0;
-        uint32_t aspirationRetries=0;
+        uint32_t numAspirationRetries=0;
+        uint64_t numPvsScouts=0;
+        uint64_t numPvsResearches=0;
+        uint64_t numQsDeltaPrunes=0;
+        uint64_t numQsSeePrunes=0;
         uint32_t numSearches = 0;
         uint32_t bestMoves[8];
 

@@ -23,7 +23,7 @@ namespace PerftTests {
         { "r2q1rk1/pP1p2pp/Q4n2/bbp1p3/Np6/1B3NBn/pPPP1PPP/R3K2R b KQ - 0 1", 5, {.nodes = 15833292, .captures = 2046173, .checks = 200568, 
                                                                                    .promotions = 329464, .castles = 0, .enpassants = 6512, .mates = 5}},
 
-        { "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10", 5, {.nodes = 164075551, .captures = 19528068, .checks = 2998380, 
+        { "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10", 5, {.nodes = 164075551, .captures = 19528068, .checks = 2998608, 
                                                                                    .promotions = 0, .castles = 0, .enpassants = 122, .mates = 0}}
                                                                                 
     };

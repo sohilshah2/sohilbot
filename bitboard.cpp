@@ -845,6 +845,82 @@ bool BitBoard::testInCheck(bool c) const {
     return !king;
 }
 
+static uint64_t rayAttacks(uint8_t sq, uint64_t occ, uint64_t (*shift)(uint64_t const)) {
+    uint64_t attacks = 0;
+    uint64_t bb = 1ull << sq;
+    while ((bb = shift(bb))) {
+        attacks |= bb;
+        if (bb & occ) break;
+    }
+    return attacks;
+}
+
+uint64_t BitBoard::attackersTo(uint8_t sq, uint64_t occ) const {
+    uint64_t attackers = 0;
+    attackers |= pawnAttacks[WHITE][sq] & p[BLACK].pawn & occ;
+    attackers |= pawnAttacks[BLACK][sq] & p[WHITE].pawn & occ;
+    attackers |= knightAttacks[sq] & (p[WHITE].knight | p[BLACK].knight) & occ;
+    attackers |= kingAttacks[sq] & (p[WHITE].king | p[BLACK].king) & occ;
+
+    uint64_t bishops = (p[WHITE].bishop | p[WHITE].queen | p[BLACK].bishop | p[BLACK].queen) & occ;
+    uint64_t rooks = (p[WHITE].rook | p[WHITE].queen | p[BLACK].rook | p[BLACK].queen) & occ;
+    uint64_t diag = rayAttacks(sq, occ, shiftNoEast) | rayAttacks(sq, occ, shiftNoWest)
+                  | rayAttacks(sq, occ, shiftSoEast) | rayAttacks(sq, occ, shiftSoWest);
+    uint64_t ortho = rayAttacks(sq, occ, shiftNorth) | rayAttacks(sq, occ, shiftSouth)
+                   | rayAttacks(sq, occ, shiftEast) | rayAttacks(sq, occ, shiftWest);
+    attackers |= diag & bishops;
+    attackers |= ortho & rooks;
+    return attackers;
+}
+
+uint64_t BitBoard::leastValuableAttacker(Color side, uint64_t attackers, uint64_t occ, Piece& piece) const {
+    uint64_t bb;
+    if ((bb = p[side].pawn & attackers & occ)) { piece = PAWN; return bb & -bb; }
+    if ((bb = p[side].knight & attackers & occ)) { piece = KNIGHT; return bb & -bb; }
+    if ((bb = p[side].bishop & attackers & occ)) { piece = BISHOP; return bb & -bb; }
+    if ((bb = p[side].rook & attackers & occ)) { piece = ROOK; return bb & -bb; }
+    if ((bb = p[side].queen & attackers & occ)) { piece = QUEEN; return bb & -bb; }
+    if ((bb = p[side].king & attackers & occ)) { piece = KING; return bb & -bb; }
+    piece = EMPTY;
+    return 0;
+}
+
+int32_t BitBoard::seeRecapture(uint8_t to, uint64_t occ, Color side, Piece captured) const {
+    Piece attacker = EMPTY;
+    uint64_t from = leastValuableAttacker(side, attackersTo(to, occ), occ, attacker);
+    if (!from) return 0;
+
+    if (attacker == PAWN && (to / 8 == 0 || to / 8 == 7)) {
+        attacker = QUEEN;
+    }
+
+    occ ^= from;
+    int32_t score = SEE_VALUE[captured]
+                    - seeRecapture(to, occ, static_cast<Color>(side ^ BLACK), attacker);
+    return (score < 0) ? 0 : score;
+}
+
+int32_t BitBoard::see(Move const& move) const {
+    Piece captured = move.moveData.isEnPassant ? PAWN : getPiece(p[!turn], move.to);
+    Piece attacker = getPiece(p[turn], move.from);
+    int32_t value = SEE_VALUE[captured];
+    if (move.moveData.isPromotion) {
+        value += SEE_VALUE[move.promote] - SEE_VALUE[PAWN];
+        attacker = move.promote;
+    }
+
+    uint64_t occ = s[WHITE].occupancy | s[BLACK].occupancy;
+    occ ^= (1ull << move.from);
+    if (move.moveData.isEnPassant) {
+        uint8_t const epSq = move.to + (turn == WHITE ? -8 : 8);
+        occ ^= (1ull << epSq);
+    } else {
+        occ &= ~(1ull << move.to);
+    }
+
+    return value - seeRecapture(move.to, occ, static_cast<Color>(turn ^ BLACK), attacker);
+}
+
 int32_t BitBoard::evaluateKingSafety() const {
     int32_t numPos = 0;
     // King safety. Pretend king was a queen and see how far it can go. Penalize more available moves.

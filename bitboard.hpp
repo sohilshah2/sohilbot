@@ -114,6 +114,7 @@ class BitBoard {
                        struct Move const& killer1 = Move(), struct Move const& killer2 = Move()) const;
         uint8_t getAvailableMoves(std::array<Move,MAX_MOVES>& movesAvailable, bool capturesOnly=false) const;
         bool testInCheck(bool c) const;
+        int32_t see(struct Move const& move) const;
         int32_t estimateMoveValue(struct Move const& move) const;
         void recalculateOccupancy();
         void recalculateThreats();
@@ -139,5 +140,10 @@ class BitBoard {
         uint32_t getRookMoves(std::array<Move,MAX_MOVES>::iterator& moves, bool capturesOnly) const;
         uint32_t getBishopMoves(std::array<Move,MAX_MOVES>::iterator& moves, bool capturesOnly) const;
         void maskIfPositionAttacked(uint64_t& bb, bool c) const;
+        uint64_t attackersTo(uint8_t sq, uint64_t occ) const;
+        uint64_t leastValuableAttacker(BitBoardState::Color side, uint64_t attackers,
+                                       uint64_t occ, BitBoardState::Piece& piece) const;
+        int32_t seeRecapture(uint8_t to, uint64_t occ, BitBoardState::Color side,
+                             BitBoardState::Piece captured) const;
 };
 #endif

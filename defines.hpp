@@ -30,6 +30,18 @@
 #ifndef DISABLE_KILLERS
 #define ENABLE_KILLERS
 #endif
+#ifndef DISABLE_QS_CHECK
+#define ENABLE_QS_CHECK
+#endif
+#ifndef DISABLE_QS_DELTA
+#define ENABLE_QS_DELTA
+#endif
+#ifndef DISABLE_QS_SEE
+#define ENABLE_QS_SEE
+#endif
+#ifndef DISABLE_PVS
+#define ENABLE_PVS
+#endif
 
 // Defaults OFF — enable with -DENABLE_<NAME> or -DHISTORY_HEURISTIC
 //#define ENABLE_ASPIRATION
@@ -65,6 +77,10 @@
 // Quiescence: search captures this many plies past the ID horizon (not 2x depth).
 #ifndef QS_EXTRA_PLIES
 #define QS_EXTRA_PLIES 4
+#endif
+// Extra cp on top of captured material before a capture can be delta-pruned.
+#ifndef QS_DELTA_MARGIN
+#define QS_DELTA_MARGIN 200
 #endif
 
 #define ASPIRATION_START 45
@@ -103,6 +119,7 @@ namespace BitBoardState {
 
     static int32_t const KING_VALUE = 50000;
     static int32_t const KING_STRENGTH_VALUE = 430;
+    static int32_t const SEE_KING_VALUE = 20000;
 
     static int32_t const PAWN_VALUE_MG = 90;
     static int32_t const KNIGHT_VALUE_MG = 320;
@@ -114,7 +131,13 @@ namespace BitBoardState {
     static int32_t const KNIGHT_VALUE_EG = 320;
     static int32_t const BISHOP_VALUE_EG = 335;
     static int32_t const ROOK_VALUE_EG = 530;
-    static int32_t const QUEEN_VALUE_EG = 1100; 
+    static int32_t const QUEEN_VALUE_EG = 1100;
+
+    // Indexed by Piece. King must outrank any non-mate capture sequence.
+    static int32_t const SEE_VALUE[7] = {
+        0, PAWN_VALUE_MG, ROOK_VALUE_MG, KNIGHT_VALUE_MG,
+        BISHOP_VALUE_MG, QUEEN_VALUE_MG, SEE_KING_VALUE
+    }; 
 
     static const uint64_t notAFile = 0xfefefefefefefefe;
     static const uint64_t notHFile = 0x7f7f7f7f7f7f7f7f;
